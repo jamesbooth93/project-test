@@ -5,11 +5,6 @@ import streamlit as st
 
 from action_registry import action_cost, action_description, action_label
 from game_logic import TEAM_WIDE_ACTIONS, GameState
-from scenario_definitions import SCENARIOS, STARTER_PACK_NAME, STARTER_PACK_SCENARIOS
-from benchmarks import (
-    autoplay_demo_route_for_outcome,
-    autoplay_demo_route_for_summary_branch,
-)
 from charts import (
     draw_network_chart,
     draw_observed_risk_chart,
@@ -41,13 +36,10 @@ TEST_MODE = os.environ.get("MANAGEMENT_SIM_TEST_MODE") == "1"
 if not TEST_MODE:
     st.set_page_config(page_title="Suppress the Stress", layout="wide")
 
-DEFAULT_SCENARIO_KEY = STARTER_PACK_SCENARIOS[0]
+PRODUCT_LAUNCH_SCENARIO_KEY = "scenario_01"
+DEFAULT_SCENARIO_KEY = PRODUCT_LAUNCH_SCENARIO_KEY
 PRODUCT_TITLE = "Suppress the Stress"
 PRODUCT_SUBTITLE = "Notice the signals. Read the pattern. Strengthen the team."
-PACK_STATUS_TEXT = (
-    f"This build is currently focused on the {STARTER_PACK_NAME.lower()}. "
-    "The scenario shell is staying deliberately narrow while the first pack takes shape."
-)
 if not TEST_MODE:
     st.markdown(
         """
@@ -234,7 +226,7 @@ def clear_diagnosis_box():
 
 
 def reset_game(scenario_key=None):
-    selected_scenario = scenario_key or st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY)
+    selected_scenario = scenario_key or PRODUCT_LAUNCH_SCENARIO_KEY
     st.session_state.selected_scenario = selected_scenario
     st.session_state.game = GameState(scenario=selected_scenario)
     st.session_state.pending_week_review = False
@@ -247,15 +239,16 @@ def reset_game(scenario_key=None):
 
 
 def ensure_state():
-    if "selected_scenario" not in st.session_state:
-        st.session_state.selected_scenario = DEFAULT_SCENARIO_KEY
-    if "game" not in st.session_state:
-        reset_game(st.session_state.selected_scenario)
-    else:
-        st.session_state.setdefault("pending_week_review", False)
-        st.session_state.setdefault("results_view", "summary")
-        st.session_state.setdefault("analysis_week", 0)
-        st.session_state.setdefault("evidence_employee_id", None)
+    if st.session_state.get("selected_scenario") != PRODUCT_LAUNCH_SCENARIO_KEY:
+        reset_game(PRODUCT_LAUNCH_SCENARIO_KEY)
+        return
+    if "game" not in st.session_state or st.session_state.game.scenario != PRODUCT_LAUNCH_SCENARIO_KEY:
+        reset_game(PRODUCT_LAUNCH_SCENARIO_KEY)
+        return
+    st.session_state.setdefault("pending_week_review", False)
+    st.session_state.setdefault("results_view", "summary")
+    st.session_state.setdefault("analysis_week", 0)
+    st.session_state.setdefault("evidence_employee_id", None)
 
 
 def people_label(count):
@@ -964,57 +957,6 @@ if not TEST_MODE:
     ensure_state()
     game = st.session_state.game
     vm = build_weekly_view_model(game)
-
-    st.sidebar.title("Run Controls")
-    st.sidebar.write(PACK_STATUS_TEXT)
-    scenario_options = {
-        SCENARIOS[scenario_key].label: scenario_key
-        for scenario_key in STARTER_PACK_SCENARIOS
-    }
-    current_scenario_label = next(
-        label for label, scenario_key in scenario_options.items()
-        if scenario_key == st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY)
-    )
-    chosen_scenario_label = st.sidebar.selectbox(
-        "Scenario",
-        list(scenario_options.keys()),
-        index=list(scenario_options.keys()).index(current_scenario_label),
-    )
-    chosen_scenario_key = scenario_options[chosen_scenario_label]
-    if chosen_scenario_key != st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY):
-        reset_game(chosen_scenario_key)
-        st.rerun()
-    if st.sidebar.button("Restart Scenario", width="stretch"):
-        reset_game()
-        st.rerun()
-    st.sidebar.markdown("---")
-    st.sidebar.write("Demo endings")
-    if st.sidebar.button("Demo: Spiralled", width="stretch"):
-        st.session_state.game = autoplay_demo_route_for_outcome("none", desired_tier="Fail", scenario_key=st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY))
-        st.session_state.pending_week_review = False
-        st.session_state.results_view = "summary"
-        clear_diagnosis_box()
-        st.rerun()
-    if st.sidebar.button("Demo: High Strain Count", width="stretch"):
-        route_name = "none" if st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY) == "scenario_02" else "relieve"
-        st.session_state.game = autoplay_demo_route_for_summary_branch(route_name, "high_strain_count", scenario_key=st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY))
-        st.session_state.pending_week_review = False
-        st.session_state.results_view = "summary"
-        clear_diagnosis_box()
-        st.rerun()
-    if st.sidebar.button("Demo: More Strain Than Needed", width="stretch"):
-        route_name = "mixed" if st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY) == "scenario_02" else "relieve"
-        st.session_state.game = autoplay_demo_route_for_summary_branch(route_name, "more_strain_than_needed", scenario_key=st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY))
-        st.session_state.pending_week_review = False
-        st.session_state.results_view = "summary"
-        clear_diagnosis_box()
-        st.rerun()
-    if st.sidebar.button("Demo: Well Done", width="stretch"):
-        st.session_state.game = autoplay_demo_route_for_outcome("recommended", desired_tier="Succeed", scenario_key=st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY))
-        st.session_state.pending_week_review = False
-        st.session_state.results_view = "summary"
-        clear_diagnosis_box()
-        st.rerun()
 
     if st.session_state.pending_week_review and not game.game_over:
         history = game.get_analysis_history()
