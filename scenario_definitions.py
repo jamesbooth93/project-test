@@ -513,9 +513,9 @@ CONFLICT_CLUSTER = ScenarioDefinition(
         },
         "recommended_analysis_copy": {
             "opening": (
-                "At the outset, the main management question was whether this was pressure sitting with {focal} alone or whether the launch strain was already starting to spread through the people around them. "
-                "The visible issue made it tempting to stay tightly focused on one person, but the stronger read from the beginning was to keep an eye on the surrounding pocket as well. "
-                "What mattered most at this stage was not acting quickly for its own sake, but noticing the level at which the problem was really forming."
+                "At the outset, {focal} looked like the problem. The more important question was whether the strain was actually sitting with {focal} alone or already starting to spread through the people closest to them. "
+                "Stress propagates through the connections around it, so the goal was not just to extinguish the visible flames, but to stop the spread before it gathered momentum. "
+                "By looking at the pocket around {focal}, {hidden}, {spillover}, and {anchor}, you could see that the noise around {focal} was part of a deeper local pattern rather than a single-person issue."
             ),
             "corrective": {
                 1: (

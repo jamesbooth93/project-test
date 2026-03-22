@@ -1,6 +1,9 @@
+import random
+
 from action_registry import action_cost
 from game_logic import GameState
 from reporting import build_benchmark_history, _analysis_snapshot_for_week, determine_summary_branch
+from scenario_copy import scenario_01_explicit_route_path
 from scenario_definitions import SCENARIOS
 from scenario_runtime import apply_recommended_actions_for_week
 
@@ -232,5 +235,48 @@ def autoplay_demo_route_for_summary_branch(route_name, desired_branch, scenario_
         benchmark_history = build_benchmark_history(game, benchmark_name="stabilising_response")
         benchmark_latest = _analysis_snapshot_for_week(benchmark_history, game.max_weeks)
         if determine_summary_branch(game, history, latest, benchmark_history, benchmark_latest) == desired_branch:
+            return game
+    return fallback_game
+
+
+def autoplay_demo_route_for_outcome_randomized(route_name, desired_tier, scenario_key, attempts=40):
+    fallback_game = None
+    rng = random.SystemRandom()
+    for _ in range(attempts):
+        seed = rng.randrange(0, 1_000_000_000)
+        game = autoplay_demo_route(route_name, seed=seed, scenario_key=scenario_key)
+        fallback_game = game
+        history = game.get_analysis_history()
+        latest = history[-1] if history else {}
+        if latest.get("scenario_outcome_tier") == desired_tier:
+            return game
+    return fallback_game
+
+
+def autoplay_demo_route_for_summary_branch_randomized(route_name, desired_branch, scenario_key, attempts=40):
+    fallback_game = None
+    rng = random.SystemRandom()
+    for _ in range(attempts):
+        seed = rng.randrange(0, 1_000_000_000)
+        game = autoplay_demo_route(route_name, seed=seed, scenario_key=scenario_key)
+        fallback_game = game
+        history = game.get_analysis_history()
+        latest = history[-1] if history else {}
+        benchmark_history = build_benchmark_history(game, benchmark_name="stabilising_response")
+        benchmark_latest = _analysis_snapshot_for_week(benchmark_history, game.max_weeks)
+        if determine_summary_branch(game, history, latest, benchmark_history, benchmark_latest) == desired_branch:
+            return game
+    return fallback_game
+
+
+def autoplay_demo_route_for_explicit_path_randomized(route_name, desired_path, scenario_key, attempts=40):
+    fallback_game = None
+    rng = random.SystemRandom()
+    for _ in range(attempts):
+        seed = rng.randrange(0, 1_000_000_000)
+        game = autoplay_demo_route(route_name, seed=seed, scenario_key=scenario_key)
+        fallback_game = game
+        history = game.get_analysis_history()
+        if scenario_key == "scenario_01" and scenario_01_explicit_route_path(history) == desired_path:
             return game
     return fallback_game

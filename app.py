@@ -5,8 +5,11 @@ import streamlit as st
 
 from action_registry import action_cost, action_description, action_label, action_past_tense
 from benchmarks import (
+    autoplay_demo_route_for_explicit_path_randomized,
     autoplay_demo_route_for_outcome,
+    autoplay_demo_route_for_outcome_randomized,
     autoplay_demo_route_for_summary_branch,
+    autoplay_demo_route_for_summary_branch_randomized,
 )
 from game_logic import TEAM_WIDE_ACTIONS, GameState
 from scenario_definitions import SCENARIOS, STARTER_PACK_NAME, STARTER_PACK_SCENARIOS
@@ -19,7 +22,6 @@ from charts import (
 )
 from reporting import (
     _analysis_snapshot_for_week,
-    average_cluster_strain_across_history,
     build_benchmark_history,
     build_end_of_week_report,
     cluster_strain_avg,
@@ -35,7 +37,6 @@ from scenario_runtime import (
 from scenario_copy import (
     scenario_analysis_copy,
     scenario_end_screen_copy,
-    scenario_narrative_path,
     scenario_week_end_report,
 )
 from character_profiles import character_profile
@@ -306,24 +307,6 @@ def analysis_step_label(week):
     return "Opening Brief" if week == 0 else f"Week {week}"
 
 
-def displayed_final_score(game, history, latest, benchmark_history, benchmark_latest, raw_avg):
-    if raw_avg is None:
-        return None
-    if game.scenario != "scenario_01":
-        return raw_avg
-
-    path = scenario_narrative_path(game, history, latest, benchmark_history, benchmark_latest)
-    bands = {
-        "well_done": (0.34, 0.40),
-        "more_strain_than_needed": (0.41, 0.49),
-        "high_strain_count": (0.50, 0.59),
-        "spiralled": (0.60, 0.75),
-    }
-    low, high = bands.get(path, (0.45, 0.55))
-    normalized = min(1.0, max(0.0, float(raw_avg)))
-    return low + (high - low) * normalized
-
-
 def build_opening_snapshot(game):
     opening_game = GameState(
         scenario=game.scenario,
@@ -430,12 +413,19 @@ def _draw_snapshot_map(snapshot, title, metric_key, positions=None):
     positions = positions or _snapshot_positions(snapshot)
     employees = snapshot.get("employees", []) if snapshot else []
     employee_lookup = {employee["id"]: employee for employee in employees}
+    cluster_ids = {
+        snapshot.get("scenario_roles", {}).get("focal_employee"),
+        snapshot.get("scenario_roles", {}).get("hidden_strain_employee"),
+        snapshot.get("scenario_roles", {}).get("spillover_employee"),
+        snapshot.get("scenario_roles", {}).get("cluster_anchor"),
+    } if snapshot else set()
+    cluster_ids.discard(None)
     for edge in snapshot.get("network_edges", []) if snapshot else []:
         left = positions.get(edge["source"])
         right = positions.get(edge["target"])
         if left and right:
             ax.plot([left[0], right[0]], [left[1], right[1]], color="#d8cdb7", linewidth=0.7 + 2.0 * edge.get("weight", 0.0), alpha=0.22)
-    xs, ys, colors, sizes = [], [], [], []
+    xs, ys, colors, sizes, edgecolors, linewidths = [], [], [], [], [], []
     for node_id, (x, y) in positions.items():
         employee = employee_lookup.get(node_id, {})
         value = float(employee.get(metric_key, 0.0))
@@ -443,8 +433,25 @@ def _draw_snapshot_map(snapshot, title, metric_key, positions=None):
         ys.append(y)
         colors.append(value)
         sizes.append(380 + 620 * value)
+        if node_id in cluster_ids:
+            edgecolors.append("#12324a")
+            linewidths.append(2.2)
+        else:
+            edgecolors.append("#f5efe2")
+            linewidths.append(1.0)
         ax.text(x, y, employee.get("name", str(node_id)), ha="center", va="center", fontsize=7.2, color="#1f2937")
-    scatter = ax.scatter(xs, ys, c=colors, s=sizes, cmap=plt.cm.YlOrRd, vmin=0, vmax=1, alpha=0.92, edgecolors="#f5efe2", linewidths=1.0)
+    ax.scatter(
+        xs,
+        ys,
+        c=colors,
+        s=sizes,
+        cmap=plt.cm.YlOrRd,
+        vmin=0,
+        vmax=1,
+        alpha=0.92,
+        edgecolors=edgecolors,
+        linewidths=linewidths,
+    )
     ax.set_title(title, fontsize=12)
     ax.axis("off")
     plt.tight_layout()
@@ -457,6 +464,36 @@ def draw_analysis_heatmap(snapshot, title, positions=None):
 
 def draw_observed_risk_snapshot_map(snapshot, title, positions=None):
     return _draw_snapshot_map(snapshot, title, "observed_risk", positions=positions)
+
+
+def core_group_summary(snapshot):
+    if not snapshot:
+        return None
+    role_keys = (
+        "focal_employee",
+        "hidden_strain_employee",
+        "spillover_employee",
+        "cluster_anchor",
+    )
+    roles = snapshot.get("scenario_roles", {})
+    employees = {employee["id"]: employee for employee in snapshot.get("employees", [])}
+    group_rows = [employees.get(roles.get(role_key)) for role_key in role_keys if roles.get(role_key) in employees]
+    if not group_rows:
+        return None
+    names = [row.get("name", "Unknown") for row in group_rows]
+    avg_true = sum(float(row.get("true_strain", 0.0)) for row in group_rows) / len(group_rows)
+    focal_name = names[0]
+    if len(names) == 1:
+        names_text = focal_name
+    elif len(names) == 2:
+        names_text = f"{names[0]} and {names[1]}"
+    else:
+        names_text = f"{', '.join(names[:-1])}, and {names[-1]}"
+    return {
+        "focal_name": focal_name,
+        "names_text": names_text,
+        "avg_true": avg_true,
+    }
 
 
 def format_actions_for_analysis(snapshot):
@@ -557,7 +594,7 @@ def render_header(vm, game):
     )
 
     combined_briefing = vm.briefing_text
-    if getattr(vm, "briefing_aside", None):
+    if vm.briefing_aside:
         combined_briefing = f"{combined_briefing} {vm.briefing_aside}".strip()
     st.write(combined_briefing)
     st.markdown('</div>', unsafe_allow_html=True)
@@ -777,43 +814,41 @@ def render_week_resolution(snapshot, previous_snapshot):
 
 def render_final_score(game):
     history = game.get_analysis_history()
-    latest = history[-1] if history else {}
     benchmark_history = build_benchmark_history(game, benchmark_name="stabilising_response")
-    benchmark_latest = _analysis_snapshot_for_week(benchmark_history, game.max_weeks)
-    player_avg = average_cluster_strain_across_history(history)
-    display_avg = displayed_final_score(game, history, latest, benchmark_history, benchmark_latest, player_avg)
+    latest_snapshot = history[-1] if history else None
+    player_avg = cluster_strain_avg(latest_snapshot) if latest_snapshot else None
 
     st.markdown('<div class="shell-card">', unsafe_allow_html=True)
     st.markdown('<h2 class="centered-outcome">Final Score</h2>', unsafe_allow_html=True)
-    if display_avg is not None:
+    if player_avg is not None:
         st.markdown(
-            f'<div class="summary-impact">Average core-group strain across the run: {round(display_avg * 100)}%</div>',
+            f'<div class="summary-impact">Core-group strain at the end of the scenario: {round(player_avg * 100)}%</div>',
             unsafe_allow_html=True,
         )
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="soft-card">', unsafe_allow_html=True)
     scenario_targets = {
-        "scenario_01": 0.40,
+        "scenario_01": 0.29,
         "scenario_02": 0.52,
     }
     target_avg = scenario_targets.get(game.scenario)
-    if display_avg is not None and target_avg is not None:
-        if display_avg <= target_avg + 0.005:
+    if player_avg is not None and target_avg is not None:
+        if player_avg <= target_avg + 0.005:
             copy = (
-                f'You finished with an average core-group strain of {round(display_avg * 100)}%. '
+                f'You finished with core-group strain at {round(player_avg * 100)}%. '
                 f'This is better than the target score of {round(target_avg * 100)}% or lower. '
                 'Well done.'
             )
         else:
             copy = (
-                f'You finished with an average core-group strain of {round(display_avg * 100)}%. '
+                f'You finished with core-group strain at {round(player_avg * 100)}%. '
                 f'A good target for this scenario is {round(target_avg * 100)}% or lower. '
                 'That gives you a clear number to aim for next run.'
             )
-    elif display_avg is not None:
+    elif player_avg is not None:
         copy = (
-            f'You finished with an average core-group strain of {round(display_avg * 100)}%. '
+            f'You finished with core-group strain at {round(player_avg * 100)}%. '
             'Lower is better, so this gives you a clear number to improve on next run.'
         )
     else:
@@ -1015,6 +1050,17 @@ def render_end_screen(game):
         else:
             st.session_state.results_view = "score"
             st.rerun()
+    if selected_snapshot:
+        summary = core_group_summary(selected_snapshot)
+        if summary:
+            st.markdown(
+                (
+                    f'<div class="centered-results-text"><strong>{summary["focal_name"]} and the connected core group</strong> '
+                    f'({summary["names_text"]}) are highlighted on the chart. '
+                    f'Their average true strain at this point was {round(summary["avg_true"] * 100)}%.</div>'
+                ),
+                unsafe_allow_html=True,
+            )
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="soft-card">', unsafe_allow_html=True)
@@ -1078,58 +1124,6 @@ if not TEST_MODE:
     ensure_state()
     game = st.session_state.game
     vm = build_weekly_view_model(game)
-
-    st.sidebar.title("Run Controls")
-    st.sidebar.write(PACK_STATUS_TEXT)
-    scenario_options = {
-        SCENARIOS[scenario_key].label: scenario_key
-        for scenario_key in STARTER_PACK_SCENARIOS
-    }
-    current_scenario_label = next(
-        label for label, scenario_key in scenario_options.items()
-        if scenario_key == st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY)
-    )
-    chosen_scenario_label = st.sidebar.selectbox(
-        "Scenario",
-        list(scenario_options.keys()),
-        index=list(scenario_options.keys()).index(current_scenario_label),
-    )
-    chosen_scenario_key = scenario_options[chosen_scenario_label]
-    if chosen_scenario_key != st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY):
-        reset_game(chosen_scenario_key)
-        st.rerun()
-    if st.sidebar.button("Restart Scenario", width="stretch"):
-        reset_game()
-        st.rerun()
-    st.sidebar.markdown("---")
-    st.sidebar.write("Demo endings")
-    if st.sidebar.button("Demo: Spiralled", width="stretch"):
-        st.session_state.game = autoplay_demo_route_for_outcome("none", desired_tier="Fail", scenario_key=st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY))
-        st.session_state.pending_week_review = False
-        st.session_state.results_view = "summary"
-        clear_diagnosis_box()
-        st.rerun()
-    if st.sidebar.button("Demo: High Strain Count", width="stretch"):
-        route_name = "none" if st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY) == "scenario_02" else "high_strain_count"
-        st.session_state.game = autoplay_demo_route_for_summary_branch(route_name, "high_strain_count", scenario_key=st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY))
-        st.session_state.pending_week_review = False
-        st.session_state.results_view = "summary"
-        clear_diagnosis_box()
-        st.rerun()
-    if st.sidebar.button("Demo: More Strain Than Needed", width="stretch"):
-        route_name = "mixed" if st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY) == "scenario_02" else "more_strain_than_needed"
-        st.session_state.game = autoplay_demo_route_for_summary_branch(route_name, "more_strain_than_needed", scenario_key=st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY))
-        st.session_state.pending_week_review = False
-        st.session_state.results_view = "summary"
-        clear_diagnosis_box()
-        st.rerun()
-    if st.sidebar.button("Demo: Well Done", width="stretch"):
-        route_name = "recommended" if st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY) == "scenario_02" else "well_done"
-        st.session_state.game = autoplay_demo_route_for_outcome(route_name, desired_tier="Succeed", scenario_key=st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY))
-        st.session_state.pending_week_review = False
-        st.session_state.results_view = "summary"
-        clear_diagnosis_box()
-        st.rerun()
 
     if st.session_state.pending_week_review and not game.game_over:
         history = game.get_analysis_history()

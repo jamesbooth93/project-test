@@ -12,6 +12,7 @@ from reporting import (
     _analysis_snapshot_for_week,
     average_cluster_strain_across_history,
     build_benchmark_history,
+    cluster_strain_avg,
     determine_summary_branch,
 )
 from benchmarks import autoplay_demo_route, autoplay_demo_route_for_outcome, autoplay_demo_route_for_summary_branch
@@ -20,7 +21,6 @@ from scenario_copy import scenario_end_screen_copy, scenario_week_end_report
 from scenario_definitions import SCENARIOS
 from scenario_runtime import apply_recommended_actions_for_week, authored_action_quality, strategy_aligned_with_recommendation
 from view_models import build_weekly_view_model
-from app import displayed_final_score
 
 
 class ScenarioRegressionTests(unittest.TestCase):
@@ -303,15 +303,9 @@ class ScenarioRegressionTests(unittest.TestCase):
             self.assertIsNotNone(authored_copy)
             self.assertEqual(authored_copy["outcome"], expected_outcomes[expected_path])
 
-    def test_scenario_01_displayed_final_score_stays_inside_path_bands(self):
-        expected_bands = {
-            "spiralled": (0.60, 0.75),
-            "high_strain_count": (0.50, 0.59),
-            "more_strain_than_needed": (0.41, 0.49),
-            "well_done": (0.34, 0.40),
-        }
+    def test_scenario_01_representative_routes_land_in_end_state_score_bands(self):
         cases = [
-            ("spiralled", autoplay_demo_route_for_outcome("none", "Fail", "scenario_01")),
+            ("spiralled", autoplay_demo_route_for_outcome("none", "Fail", "scenario_01"), 0.55, None),
             ("high_strain_count", self._run_actions("scenario_01", {
                 1: [("quick_check_in", "focal")],
                 2: [("offer_coaching_support", "focal")],
@@ -319,7 +313,7 @@ class ScenarioRegressionTests(unittest.TestCase):
                 4: [("clarify_roles_and_handoffs", "focal")],
                 5: [("quick_check_in", "focal")],
                 6: [("group_mediation", "focal")],
-            })),
+            }), 0.40, 0.54),
             ("more_strain_than_needed", self._run_actions("scenario_01", {
                 1: [("quick_check_in", "focal")],
                 2: [("group_mediation", "focal")],
@@ -327,7 +321,7 @@ class ScenarioRegressionTests(unittest.TestCase):
                 4: [("clarify_roles_and_handoffs", "focal"), ("quick_check_in", "hidden")],
                 5: [("quick_check_in", "focal")],
                 6: [("quick_check_in", "hidden")],
-            })),
+            }), 0.30, 0.39),
             ("well_done", self._run_actions("scenario_01", {
                 1: [("quick_check_in", "focal"), ("clarify_roles_and_handoffs", "focal")],
                 2: [("offer_coaching_support", "focal"), ("group_mediation", "focal")],
@@ -335,19 +329,16 @@ class ScenarioRegressionTests(unittest.TestCase):
                 4: [("clarify_roles_and_handoffs", "focal"), ("quick_check_in", "hidden")],
                 5: [("quick_check_in", "focal")],
                 6: [("group_mediation", "focal"), ("quick_check_in", "hidden")],
-            })),
+            }), 0.00, 0.29),
         ]
 
-        for expected_path, game in cases:
-            history = game.get_analysis_history()
-            latest = history[-1]
-            benchmark_history = build_benchmark_history(game, benchmark_name="stabilising_response")
-            benchmark_latest = _analysis_snapshot_for_week(benchmark_history, game.max_weeks)
-            raw_avg = average_cluster_strain_across_history(history)
-            display_avg = displayed_final_score(game, history, latest, benchmark_history, benchmark_latest, raw_avg)
-            low, high = expected_bands[expected_path]
-            self.assertGreaterEqual(display_avg, low)
-            self.assertLessEqual(display_avg, high)
+        for _, game, lower, upper in cases:
+            latest = game.get_analysis_history()[-1]
+            end_state_score = cluster_strain_avg(latest)
+            self.assertIsNotNone(end_state_score)
+            self.assertGreaterEqual(end_state_score, lower - 0.001)
+            if upper is not None:
+                self.assertLessEqual(end_state_score, upper + 0.001)
 
     def test_scenario_01_week_one_strong_opening_bends_raw_cluster_strain_downward(self):
         no_action_game = GameState(
@@ -509,22 +500,12 @@ class ScenarioRegressionTests(unittest.TestCase):
 
         self.assertIn("steadied the group around jordan", vm.briefing_aside.lower())
 
-    def test_scenario_01_sidebar_demo_buttons_land_on_expected_debriefs(self):
+    def test_scenario_01_sidebar_is_not_rendered(self):
         original_test_mode = os.environ.pop("MANAGEMENT_SIM_TEST_MODE", None)
         try:
-            expected = {
-                "Demo: Spiralled": "Management Review: The launch was not controlled well enough.",
-                "Demo: High Strain Count": "Management Review: You got the launch through, but not strongly enough.",
-                "Demo: More Strain Than Needed": "Management Review: You recovered the situation, but later than we would want.",
-                "Demo: Well Done": "Management Review: This was a strong piece of management under pressure.",
-            }
-            for label, outcome in expected.items():
-                app = AppTest.from_file("/Users/james/Supress The Stress/app.py")
-                app.run(timeout=20)
-                next(button for button in app.sidebar.button if button.label == label).click()
-                app.run(timeout=20)
-                rendered = "\n".join(str(getattr(item, "value", "")) for item in app.markdown)
-                self.assertIn(outcome, rendered, msg=f"{label} did not land on the expected debrief")
+            app = AppTest.from_file("/Users/james/Supress The Stress/app.py")
+            app.run(timeout=20)
+            self.assertEqual(len(app.sidebar.button), 0)
         finally:
             if original_test_mode is not None:
                 os.environ["MANAGEMENT_SIM_TEST_MODE"] = original_test_mode

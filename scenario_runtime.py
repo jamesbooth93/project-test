@@ -333,7 +333,7 @@ def update_scenario_progress(game, action_type, node=None, action_categories=Non
 def apply_authored_trajectory_shaping(game):
     if game.scenario != "scenario_01":
         return
-    from scenario_copy import scenario_weekly_narrative_path
+    from scenario_copy import scenario_01_explicit_route_path, scenario_weekly_narrative_path
 
     snapshot = {
         "week": game.week,
@@ -386,6 +386,17 @@ def apply_authored_trajectory_shaping(game):
     }
     scalar = week_scalars.get(game.week, 1.0)
     roles = game.scenario_state.get("scenario_roles", {})
+    cluster_roles = (
+        "focal_employee",
+        "hidden_strain_employee",
+        "spillover_employee",
+        "cluster_anchor",
+    )
+    cluster_node_ids = [
+        roles.get(role_name)
+        for role_name in cluster_roles
+        if roles.get(role_name) is not None and roles.get(role_name) in game.G.nodes
+    ]
 
     for role_name, base_delta in adjustments.items():
         node_id = roles.get(role_name)
@@ -393,6 +404,135 @@ def apply_authored_trajectory_shaping(game):
             continue
         node = game.G.nodes[node_id]
         node["strain"] = min(1.0, max(0.0, float(node.get("strain", 0.0)) + (base_delta * scalar)))
+
+    if not cluster_node_ids:
+        return
+
+    def current_cluster_avg():
+        values = [float(game.G.nodes[node_id].get("strain", 0.0)) for node_id in cluster_node_ids]
+        return (sum(values) / len(values)) if values else None
+
+    def shift_cluster_average(target_avg):
+        current_avg = current_cluster_avg()
+        if current_avg is None:
+            return
+        delta = target_avg - current_avg
+        if abs(delta) < 1e-6:
+            return
+        for node_id in cluster_node_ids:
+            node = game.G.nodes[node_id]
+            node["strain"] = min(1.0, max(0.0, float(node.get("strain", 0.0)) + delta))
+
+    final_bands = {
+        "well_done": (0.00, 0.29),
+        "more_strain_than_needed": (0.30, 0.39),
+        "high_strain_count": (0.40, 0.54),
+        "spiralled": (0.55, 1.00),
+    }
+    final_history = history + [snapshot]
+    final_path = scenario_01_explicit_route_path(final_history) or weekly_path
+    current_avg = current_cluster_avg()
+    if current_avg is None:
+        return
+    band = final_bands.get(final_path)
+    if band is None:
+        return
+
+    if game.week >= 3 and game.week < int(game.max_weeks):
+        target_centers = {
+            "well_done": 0.22,
+            "more_strain_than_needed": 0.34,
+            "high_strain_count": 0.47,
+            "spiralled": 0.70,
+        }
+        live_half_widths = {
+            "well_done": {
+                3: 0.12,
+                4: 0.10,
+                5: 0.08,
+            },
+            "more_strain_than_needed": {
+                3: 0.10,
+                4: 0.08,
+                5: 0.06,
+            },
+            "high_strain_count": {
+                3: 0.11,
+                4: 0.08,
+                5: 0.06,
+            },
+            "spiralled": {
+                3: 0.18,
+                4: 0.16,
+                5: 0.14,
+            },
+        }
+        progress_strengths = {
+            "well_done": {
+                3: 0.26,
+                4: 0.34,
+                5: 0.42,
+            },
+            "more_strain_than_needed": {
+                3: 0.28,
+                4: 0.34,
+                5: 0.42,
+            },
+            "high_strain_count": {
+                3: 0.26,
+                4: 0.32,
+                5: 0.40,
+            },
+            "spiralled": {
+                3: 0.20,
+                4: 0.24,
+                5: 0.30,
+            },
+        }
+        max_shifts = {
+            "well_done": {
+                3: 0.020,
+                4: 0.025,
+                5: 0.030,
+            },
+            "more_strain_than_needed": {
+                3: 0.030,
+                4: 0.040,
+                5: 0.050,
+            },
+            "high_strain_count": {
+                3: 0.028,
+                4: 0.036,
+                5: 0.045,
+            },
+            "spiralled": {
+                3: 0.035,
+                4: 0.045,
+                5: 0.055,
+            },
+        }
+
+        band_center = target_centers.get(final_path, (band[0] + band[1]) / 2.0)
+        band_half_width = live_half_widths.get(final_path, {}).get(game.week, (band[1] - band[0]) / 2.0)
+        progress_strength = progress_strengths.get(final_path, {}).get(game.week, 0.25)
+        max_shift = max_shifts.get(final_path, {}).get(game.week, 0.03)
+        desired_shift = (band_center - current_avg) * progress_strength
+        desired_shift = min(max(desired_shift, -max_shift), max_shift)
+        projected_avg = current_avg + desired_shift
+        projected_avg = min(max(projected_avg, band[0] - band_half_width), band[1] + band_half_width)
+        shift_cluster_average(projected_avg)
+        current_avg = current_cluster_avg()
+        if current_avg is None:
+            return
+
+    if game.week < int(game.max_weeks):
+        return
+
+    if final_path == "well_done":
+        target_current_avg = min(max(current_avg, 0.12), 0.27)
+    else:
+        target_current_avg = min(max(current_avg, band[0]), band[1])
+    shift_cluster_average(target_current_avg)
 
 
 def _progress_rule_matches(game, rule, action_type, node, category, roles):

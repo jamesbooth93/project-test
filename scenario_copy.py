@@ -557,6 +557,14 @@ def scenario_narrative_path(game, history, latest, benchmark_history, benchmark_
     if (latest or {}).get("scenario_outcome_tier") == "Fail":
         return "spiralled"
 
+    explicit_path = scenario_01_explicit_route_path(history)
+    if explicit_path:
+        return explicit_path
+
+    return determine_summary_branch(game, history, latest, benchmark_history, benchmark_latest)
+
+
+def scenario_01_explicit_route_path(history):
     snapshots_by_week = {
         snapshot.get("week"): snapshot
         for snapshot in (history or [])
@@ -599,7 +607,7 @@ def scenario_narrative_path(game, history, latest, benchmark_history, benchmark_
     if high_strain:
         return "high_strain_count"
 
-    return determine_summary_branch(game, history, latest, benchmark_history, benchmark_latest)
+    return None
 
 
 def _scenario_01_action_flags(snapshot):
