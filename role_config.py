@@ -1,0 +1,38 @@
+ROLE_MODIFIERS = {
+    "founder": {
+        "observability": 0.78,
+        "spillover_out": 1.30,
+        "workload_absorb": 0.90,
+        "recovery": 0.90,
+        "intervention_leverage": 0.75,
+        "relationship_gain": 0.55,
+        "contagion_in": 1.05,
+    },
+    "lead": {
+        "observability": 0.92,
+        "spillover_out": 1.18,
+        "workload_absorb": 1.15,
+        "recovery": 0.96,
+        "intervention_leverage": 1.08,
+        "relationship_gain": 0.90,
+        "contagion_in": 1.06,
+    },
+    "ic": {
+        "observability": 1.00,
+        "spillover_out": 1.00,
+        "workload_absorb": 1.00,
+        "recovery": 1.00,
+        "intervention_leverage": 1.00,
+        "relationship_gain": 1.00,
+        "contagion_in": 1.00,
+    },
+    "support": {
+        "observability": 0.84,
+        "spillover_out": 0.96,
+        "workload_absorb": 1.22,
+        "recovery": 0.94,
+        "intervention_leverage": 1.02,
+        "relationship_gain": 1.05,
+        "contagion_in": 0.98,
+    },
+}
