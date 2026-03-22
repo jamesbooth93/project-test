@@ -822,33 +822,30 @@ def render_final_score(game):
     st.markdown('<h2 class="centered-outcome">Final Score</h2>', unsafe_allow_html=True)
     if player_avg is not None:
         st.markdown(
-            f'<div class="summary-impact">Core-group strain at the end of the scenario: {round(player_avg * 100)}%</div>',
+            f'<div class="summary-impact">Core-group strain by launch: {round(player_avg * 100)}%</div>',
             unsafe_allow_html=True,
         )
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="soft-card">', unsafe_allow_html=True)
     scenario_targets = {
-        "scenario_01": 0.29,
+        "scenario_01": 0.30,
         "scenario_02": 0.52,
     }
     target_avg = scenario_targets.get(game.scenario)
     if player_avg is not None and target_avg is not None:
         if player_avg <= target_avg + 0.005:
             copy = (
-                f'You finished with core-group strain at {round(player_avg * 100)}%. '
                 f'This is better than the target score of {round(target_avg * 100)}% or lower. '
                 'Well done.'
             )
         else:
             copy = (
-                f'You finished with core-group strain at {round(player_avg * 100)}%. '
                 f'A good target for this scenario is {round(target_avg * 100)}% or lower. '
                 'That gives you a clear number to aim for next run.'
             )
     elif player_avg is not None:
         copy = (
-            f'You finished with core-group strain at {round(player_avg * 100)}%. '
             'Lower is better, so this gives you a clear number to improve on next run.'
         )
     else:
@@ -899,7 +896,7 @@ def render_end_screen(game):
         authored_end_copy = scenario_end_screen_copy(game, history, latest, benchmark_history, benchmark_latest)
         if authored_end_copy:
             st.markdown('<div class="shell-card">', unsafe_allow_html=True)
-            st.markdown('<div class="centered-results-text"><strong>End-of-Run Debrief</strong></div>', unsafe_allow_html=True)
+            st.markdown('<div class="centered-results-text"><strong>End of Launch Debrief</strong></div>', unsafe_allow_html=True)
             st.markdown(f'<h2 class="centered-outcome">{authored_end_copy["outcome"]}</h2>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 

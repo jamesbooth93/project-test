@@ -250,7 +250,19 @@ def autoplay_demo_route_for_outcome_randomized(route_name, desired_tier, scenari
         latest = history[-1] if history else {}
         if latest.get("scenario_outcome_tier") == desired_tier:
             return game
-    return fallback_game
+    deterministic_game = autoplay_demo_route_for_outcome(
+        route_name,
+        desired_tier,
+        scenario_key,
+        seeds=range(1000),
+    )
+    deterministic_history = deterministic_game.get_analysis_history() if deterministic_game else []
+    deterministic_latest = deterministic_history[-1] if deterministic_history else {}
+    if deterministic_latest.get("scenario_outcome_tier") == desired_tier:
+        return deterministic_game
+    raise RuntimeError(
+        f"Unable to find demo route for outcome '{desired_tier}' in scenario '{scenario_key}'."
+    )
 
 
 def autoplay_demo_route_for_summary_branch_randomized(route_name, desired_branch, scenario_key, attempts=40):
@@ -266,7 +278,33 @@ def autoplay_demo_route_for_summary_branch_randomized(route_name, desired_branch
         benchmark_latest = _analysis_snapshot_for_week(benchmark_history, game.max_weeks)
         if determine_summary_branch(game, history, latest, benchmark_history, benchmark_latest) == desired_branch:
             return game
-    return fallback_game
+    deterministic_game = autoplay_demo_route_for_summary_branch(
+        route_name,
+        desired_branch,
+        scenario_key,
+        seeds=range(1000),
+    )
+    deterministic_history = deterministic_game.get_analysis_history() if deterministic_game else []
+    deterministic_latest = deterministic_history[-1] if deterministic_history else {}
+    deterministic_benchmark_history = build_benchmark_history(
+        deterministic_game,
+        benchmark_name="stabilising_response",
+    ) if deterministic_game else []
+    deterministic_benchmark_latest = _analysis_snapshot_for_week(
+        deterministic_benchmark_history,
+        deterministic_game.max_weeks,
+    ) if deterministic_game else None
+    if deterministic_game and determine_summary_branch(
+        deterministic_game,
+        deterministic_history,
+        deterministic_latest,
+        deterministic_benchmark_history,
+        deterministic_benchmark_latest,
+    ) == desired_branch:
+        return deterministic_game
+    raise RuntimeError(
+        f"Unable to find demo route for summary branch '{desired_branch}' in scenario '{scenario_key}'."
+    )
 
 
 def autoplay_demo_route_for_explicit_path_randomized(route_name, desired_path, scenario_key, attempts=40):
@@ -279,4 +317,11 @@ def autoplay_demo_route_for_explicit_path_randomized(route_name, desired_path, s
         history = game.get_analysis_history()
         if scenario_key == "scenario_01" and scenario_01_explicit_route_path(history) == desired_path:
             return game
-    return fallback_game
+    for seed in range(1000):
+        game = autoplay_demo_route(route_name, seed=seed, scenario_key=scenario_key)
+        history = game.get_analysis_history()
+        if scenario_key == "scenario_01" and scenario_01_explicit_route_path(history) == desired_path:
+            return game
+    raise RuntimeError(
+        f"Unable to find demo route for explicit path '{desired_path}' in scenario '{scenario_key}'."
+    )

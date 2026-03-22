@@ -359,7 +359,7 @@ SCENARIO_01_END_SCREEN_COPY = {
         "management_pattern": "You never established control of the real pattern driving the launch.",
         "what_you_did_well": "You were not ignoring pressure altogether, but your response stayed too close to what was easiest to see.",
         "what_limited_the_result": "The surrounding delivery cluster hardened faster than you contained it, and from that point the team was largely paying in quiet compensation.",
-        "kpi_review": "Average core-group strain finished well above target, which is not a result we should be comfortable with.",
+        "kpi_review": "Core-group strain at the end of the scenario finished well above target, which is not a result we should be comfortable with.",
         "development_point": "The management step you missed was widening your read beyond Jordan before the cluster around him became the real problem.",
     },
     "high_strain_count": {

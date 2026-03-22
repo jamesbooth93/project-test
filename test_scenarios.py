@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("MPLCONFIGDIR", tempfile.mkdtemp(prefix="management_sim_mpl_"))
 os.environ.setdefault("MANAGEMENT_SIM_TEST_MODE", "1")
@@ -15,7 +16,12 @@ from reporting import (
     cluster_strain_avg,
     determine_summary_branch,
 )
-from benchmarks import autoplay_demo_route, autoplay_demo_route_for_outcome, autoplay_demo_route_for_summary_branch
+from benchmarks import (
+    autoplay_demo_route,
+    autoplay_demo_route_for_explicit_path_randomized,
+    autoplay_demo_route_for_outcome,
+    autoplay_demo_route_for_summary_branch,
+)
 from game_logic import GameState
 from scenario_copy import scenario_end_screen_copy, scenario_week_end_report
 from scenario_definitions import SCENARIOS
@@ -305,7 +311,7 @@ class ScenarioRegressionTests(unittest.TestCase):
 
     def test_scenario_01_representative_routes_land_in_end_state_score_bands(self):
         cases = [
-            ("spiralled", autoplay_demo_route_for_outcome("none", "Fail", "scenario_01"), 0.55, None),
+            ("spiralled", autoplay_demo_route_for_outcome("none", "Fail", "scenario_01"), 0.53, None),
             ("high_strain_count", self._run_actions("scenario_01", {
                 1: [("quick_check_in", "focal")],
                 2: [("offer_coaching_support", "focal")],
@@ -329,7 +335,7 @@ class ScenarioRegressionTests(unittest.TestCase):
                 4: [("clarify_roles_and_handoffs", "focal"), ("quick_check_in", "hidden")],
                 5: [("quick_check_in", "focal")],
                 6: [("group_mediation", "focal"), ("quick_check_in", "hidden")],
-            }), 0.00, 0.29),
+            }), 0.00, 0.26),
         ]
 
         for _, game, lower, upper in cases:
@@ -506,9 +512,21 @@ class ScenarioRegressionTests(unittest.TestCase):
             app = AppTest.from_file("/Users/james/Supress The Stress/app.py")
             app.run(timeout=20)
             self.assertEqual(len(app.sidebar.button), 0)
+            self.assertEqual(len(app.sidebar.selectbox), 0)
         finally:
             if original_test_mode is not None:
                 os.environ["MANAGEMENT_SIM_TEST_MODE"] = original_test_mode
+
+    def test_randomized_explicit_demo_route_raises_if_no_matching_path_is_found(self):
+        non_matching_game = autoplay_demo_route("high_strain_count", seed=0, scenario_key="scenario_01")
+        with patch("benchmarks.autoplay_demo_route", return_value=non_matching_game):
+            with self.assertRaises(RuntimeError):
+                autoplay_demo_route_for_explicit_path_randomized(
+                    "high_strain_count",
+                    "well_done",
+                    "scenario_01",
+                    attempts=1,
+                )
 
     def test_scenario_01_week_three_coordination_on_jordan_plus_individual_on_sam_stays_positive(self):
         game = self._run_actions_until_week("scenario_01", {

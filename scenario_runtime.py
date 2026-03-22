@@ -424,10 +424,10 @@ def apply_authored_trajectory_shaping(game):
             node["strain"] = min(1.0, max(0.0, float(node.get("strain", 0.0)) + delta))
 
     final_bands = {
-        "well_done": (0.00, 0.29),
+        "well_done": (0.00, 0.26),
         "more_strain_than_needed": (0.30, 0.39),
         "high_strain_count": (0.40, 0.54),
-        "spiralled": (0.55, 1.00),
+        "spiralled": (0.53, 1.00),
     }
     final_history = history + [snapshot]
     final_path = scenario_01_explicit_route_path(final_history) or weekly_path
@@ -525,13 +525,53 @@ def apply_authored_trajectory_shaping(game):
         if current_avg is None:
             return
 
+    # On the gold path, successful early cluster containment should preserve a little
+    # managerial bandwidth rather than forcing the player off the intended route on
+    # pure energy starvation in week 4.
+    if weekly_path == "well_done" and game.week in {3, 5}:
+        game.manager_state["energy_current"] = min(
+            game.manager_state["energy_max"],
+            game.manager_state["energy_current"] + 2.0,
+        )
+        game.manager_state["strain"] = max(
+            0.0,
+            float(game.manager_state.get("strain", 0.0)) - 0.02,
+        )
+
     if game.week < int(game.max_weeks):
         return
 
+    band_low, band_high = band
+    band_width = band_high - band_low
+
+    def soft_land_within_band(value, low, high, jitter=0.12, expand=0.75):
+        # Map the end-state into the authored corridor while preserving some
+        # variation between runs, so repeated routes do not collapse to the
+        # same edge value.
+        width = max(1e-6, high - low)
+        expanded_low = low - width * expand
+        expanded_high = high + width * expand
+        normalized = (value - expanded_low) / max(1e-6, expanded_high - expanded_low)
+        normalized = min(max(normalized, 0.0), 1.0)
+        normalized += game.rng.uniform(-jitter, jitter)
+        normalized = min(max(normalized, 0.08), 0.92)
+        return low + normalized * width
+
     if final_path == "well_done":
-        target_current_avg = min(max(current_avg, 0.12), 0.27)
+        target_current_avg = soft_land_within_band(current_avg, band_low, band_high, jitter=0.16)
+    elif final_path == "more_strain_than_needed":
+        target_current_avg = soft_land_within_band(
+            current_avg,
+            band_low,
+            band_high,
+            jitter=0.18,
+            expand=1.15,
+        )
+    elif final_path == "spiralled":
+        target_current_avg = max(current_avg, band_low)
     else:
-        target_current_avg = min(max(current_avg, band[0]), band[1])
+        target_current_avg = soft_land_within_band(current_avg, band_low, band_high, jitter=0.10)
+
     shift_cluster_average(target_current_avg)
 
 

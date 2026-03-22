@@ -330,7 +330,7 @@ CONFLICT_CLUSTER = ScenarioDefinition(
         "role_assignments": {
             "focal_employee": "Jordan",
             "hidden_strain_employee": "Sam",
-            "spillover_employee": "Taylor",
+            "spillover_employee": "Priya",
             "cluster_anchor": "Maya",
         },
         "scenario_state_defaults": {
