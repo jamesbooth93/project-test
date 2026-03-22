@@ -557,7 +557,7 @@ def render_header(vm, game):
     )
 
     combined_briefing = vm.briefing_text
-    if vm.briefing_aside:
+    if getattr(vm, "briefing_aside", None):
         combined_briefing = f"{combined_briefing} {vm.briefing_aside}".strip()
     st.write(combined_briefing)
     st.markdown('</div>', unsafe_allow_html=True)
