@@ -2,8 +2,16 @@ from game_logic import GameState
 from simulation_engine import apply_benchmark_actions_for_week
 
 
-BENCHMARK_CACHE_VERSION = 1
+BENCHMARK_CACHE_VERSION = 2
 BENCHMARK_CACHE: dict[tuple, list[dict]] = {}
+
+SCENARIO_02_HIDDEN_STRAIN_TARGET = 0.30
+SCENARIO_02_HIDDEN_STRAIN_BANDS = (
+    ("well_done", 0.00, 0.30),
+    ("more_strain_than_needed", 0.31, 0.79),
+    ("high_strain_count", 0.80, 0.95),
+    ("spiralled", 0.96, None),
+)
 
 
 def build_benchmark_history(game, benchmark_name="stabilising_response"):
@@ -136,6 +144,51 @@ def scenario_two_dependency_metrics(snapshot):
     }
 
 
+def scenario_two_hidden_employee_strain(snapshot):
+    if not snapshot:
+        return None
+    hidden_id = snapshot.get("scenario_roles", {}).get("hidden_strain_employee")
+    hidden_row = _employee_row(snapshot, hidden_id)
+    if hidden_row is None:
+        return None
+    return {
+        "hidden_name": hidden_row.get("name", "Maya"),
+        "true_strain": float(hidden_row.get("true_strain", 0.0)),
+        "observed_risk": float(hidden_row.get("observed_risk", 0.0)),
+    }
+
+
+def scenario_two_hidden_strain_comparison(player_snapshot, benchmark_snapshot):
+    player = scenario_two_hidden_employee_strain(player_snapshot)
+    benchmark = scenario_two_hidden_employee_strain(benchmark_snapshot)
+    if player is None or benchmark is None:
+        return None
+    return {
+        "hidden_name": player["hidden_name"],
+        "player_hidden_strain": player["true_strain"],
+        "benchmark_hidden_strain": benchmark["true_strain"],
+    }
+
+
+def scenario_two_hidden_strain_band(snapshot):
+    hidden = scenario_two_hidden_employee_strain(snapshot)
+    if hidden is None:
+        return None
+    value = hidden["true_strain"]
+    for band_name, lower, upper in SCENARIO_02_HIDDEN_STRAIN_BANDS:
+        if value >= lower - 0.001 and (upper is None or value <= upper + 0.001):
+            return {
+                "band": band_name,
+                "score": value,
+                "target": SCENARIO_02_HIDDEN_STRAIN_TARGET,
+            }
+    return {
+        "band": "spiralled",
+        "score": value,
+        "target": SCENARIO_02_HIDDEN_STRAIN_TARGET,
+    }
+
+
 def scenario_two_peak_dependency_comparison(player_history, benchmark_history):
     def peak_metrics(history):
         metrics = [scenario_two_dependency_metrics(snapshot) for snapshot in history or []]
@@ -187,11 +240,10 @@ def scenario_one_read_level(history):
 
 def scenario_two_read_level(history):
     focal_support_early = 0
+    focal_support_weeks_4_to_6 = 0
     hidden_read_by_week_2 = 0
-    hidden_read_by_week_3 = 0
+    targeted_on_hidden_by_week_4 = 0
     hidden_relief_by_week_4 = 0
-    hidden_coordination_by_week_4 = 0
-    hidden_coordination_by_week_5 = 0
 
     for snapshot in history or []:
         week = snapshot.get("week")
@@ -208,32 +260,37 @@ def scenario_two_read_level(history):
 
             if week and week <= 2 and action_type in {"quick_check_in", "offer_coaching_support"} and target_id == focal_id:
                 focal_support_early += 1
+            if week and 4 <= week <= 6 and action_type in {"quick_check_in", "offer_coaching_support", "reduce_workload"} and target_id == focal_id:
+                focal_support_weeks_4_to_6 += 1
             if week and week <= 2 and action_type in {"check_in_on_load_bearing_risk", "surface_hidden_support_work"} and target_id == hidden_id:
                 hidden_read_by_week_2 += 1
-            if week and week <= 3 and action_type in {"check_in_on_load_bearing_risk", "surface_hidden_support_work"} and target_id == hidden_id:
-                hidden_read_by_week_3 += 1
+            if week and week <= 4 and (
+                target_id == hidden_id or from_id == hidden_id
+            ):
+                targeted_on_hidden_by_week_4 += 1
             if week and week <= 4 and (
                 (action_type == "reduce_workload" and target_id == hidden_id)
                 or (action_type == "reallocate_workload" and from_id == hidden_id)
             ):
                 hidden_relief_by_week_4 += 1
-            if week and week <= 4 and action_type in {"clarify_roles_and_handoffs", "group_mediation"} and target_id == hidden_id:
-                hidden_coordination_by_week_4 += 1
-            if week and week <= 5 and action_type in {"clarify_roles_and_handoffs", "group_mediation"} and target_id == hidden_id:
-                hidden_coordination_by_week_5 += 1
 
-    if hidden_read_by_week_2 >= 1 and hidden_relief_by_week_4 >= 1 and hidden_coordination_by_week_4 >= 1:
-        return "early_read"
-    if focal_support_early >= 1 and hidden_read_by_week_3 >= 1 and (hidden_relief_by_week_4 + hidden_coordination_by_week_5) >= 1:
-        return "late_shift"
+    if hidden_read_by_week_2 >= 1 and hidden_relief_by_week_4 >= 1 and targeted_on_hidden_by_week_4 >= 2 and focal_support_early >= 1 and focal_support_weeks_4_to_6 >= 3:
+        return "early_realignment"
+    if focal_support_early >= 1 and targeted_on_hidden_by_week_4 >= 1 and hidden_relief_by_week_4 >= 1:
+        return "late_widening"
     if focal_support_early >= 1:
-        return "visible_only"
-    return "blind"
+        return "surface_containment"
+    return "reactive_escalation"
 
 
 def determine_summary_branch(game, history, latest, benchmark_history, benchmark_latest):
     if not latest:
         return "high_strain_count"
+
+    if game.scenario == "scenario_02":
+        hidden_band = scenario_two_hidden_strain_band(latest)
+        if hidden_band:
+            return hidden_band["band"]
 
     player_high_strain = core_group_high_strain_count(latest)
     benchmark_high_strain = core_group_high_strain_count(benchmark_latest) if benchmark_latest else 0
@@ -243,14 +300,6 @@ def determine_summary_branch(game, history, latest, benchmark_history, benchmark
 
     if game.scenario == "scenario_01":
         read_level = scenario_one_read_level(history)
-        if read_level == "early_read":
-            return "well_done"
-        if read_level == "late_shift":
-            return "more_strain_than_needed"
-        return "high_strain_count"
-
-    if game.scenario == "scenario_02":
-        read_level = scenario_two_read_level(history)
         if read_level == "early_read":
             return "well_done"
         if read_level == "late_shift":

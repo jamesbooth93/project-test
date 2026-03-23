@@ -5,6 +5,8 @@ import streamlit as st
 
 from action_registry import action_cost, action_description, action_label, action_past_tense
 from benchmarks import (
+    autoplay_demo_route,
+    autoplay_demo_route_until_week,
     autoplay_demo_route_for_explicit_path_randomized,
     autoplay_demo_route_for_outcome,
     autoplay_demo_route_for_outcome_randomized,
@@ -16,6 +18,8 @@ from scenario_definitions import SCENARIOS, STARTER_PACK_NAME, STARTER_PACK_SCEN
 from charts import (
     draw_network_chart,
     draw_observed_risk_chart,
+    draw_riley_maya_bar_chart,
+    draw_riley_maya_observed_vs_actual_chart,
     draw_visible_friction_chart,
     draw_workload_distribution_chart,
     visible_load_label,
@@ -28,6 +32,9 @@ from reporting import (
     cluster_strain_improvement,
     core_group_high_strain_count,
     determine_summary_branch,
+    SCENARIO_02_HIDDEN_STRAIN_TARGET,
+    scenario_two_hidden_employee_strain,
+    scenario_two_hidden_strain_comparison,
     scenario_two_peak_dependency_comparison,
 )
 from scenario_runtime import (
@@ -43,11 +50,18 @@ from character_profiles import character_profile
 from view_models import (
     build_weekly_view_model,
 )
+from workshop_mock import SCENARIO_02_WORKSHOP_MOCK
 
 TEST_MODE = os.environ.get("MANAGEMENT_SIM_TEST_MODE") == "1"
+SCENARIO_02_WORKSHOP_TITLE = "Fragile Under Pressure"
+SHOW_SIDEBAR = False
 
 if not TEST_MODE:
-    st.set_page_config(page_title="Suppress the Stress", layout="wide")
+    st.set_page_config(
+        page_title="Suppress the Stress",
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
 
 DEFAULT_SCENARIO_KEY = STARTER_PACK_SCENARIOS[0]
 PRODUCT_TITLE = "Suppress the Stress"
@@ -64,6 +78,10 @@ if not TEST_MODE:
         max-width: 1260px;
         padding-top: 1.4rem;
         padding-bottom: 2rem;
+    }
+    [data-testid="stSidebar"],
+    [data-testid="stSidebarCollapsedControl"] {
+        display: none !important;
     }
     .shell-card {
         background: linear-gradient(180deg, #fffdf8 0%, #f5efe2 100%);
@@ -102,7 +120,7 @@ if not TEST_MODE:
         text-align: center;
         font-size: 0.95rem;
         font-weight: 700;
-        color: #ffffff;
+        color: #4f3b17;
         text-decoration: underline;
         margin: 0.7rem 0 0.45rem 0;
     }
@@ -241,11 +259,17 @@ def clear_diagnosis_box():
     st.session_state.evidence_employee_id = None
 
 
-def reset_game(scenario_key=None):
+SIMULATION_SCENARIOS = ["scenario_01", "scenario_02"]
+WORKSHOP_SCENARIOS = ["scenario_02"]
+
+
+def reset_game(scenario_key=None, experience_mode=None):
     selected_scenario = scenario_key or st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY)
     st.session_state.selected_scenario = selected_scenario
+    st.session_state.experience_mode = experience_mode or st.session_state.get("experience_mode", "simulation")
     st.session_state.game = GameState(scenario=selected_scenario)
     st.session_state.pending_week_review = False
+    st.session_state.review_snapshot_week = None
     st.session_state.results_view = "summary"
     st.session_state.analysis_week = 0
     st.session_state.evidence_employee_id = None
@@ -254,16 +278,82 @@ def reset_game(scenario_key=None):
             del st.session_state[key]
 
 
+def load_demo_run(scenario_key, route_name, desired_tier=None):
+    if desired_tier:
+        game = autoplay_demo_route_for_outcome(route_name, desired_tier, scenario_key)
+    else:
+        game = autoplay_demo_route(route_name, seed=0, scenario_key=scenario_key)
+    st.session_state.selected_scenario = scenario_key
+    st.session_state.experience_mode = "simulation"
+    st.session_state.game = game
+    st.session_state.pending_week_review = False
+    st.session_state.review_snapshot_week = None
+    st.session_state.results_view = "summary"
+    st.session_state.analysis_week = 0
+    st.session_state.evidence_employee_id = None
+    for key in ["selected_employee", "selected_employee_from", "selected_employee_to"]:
+        if key in st.session_state:
+            del st.session_state[key]
+
+
+def load_demo_run_for_explicit_path(scenario_key, route_name, desired_path):
+    game = autoplay_demo_route_for_explicit_path_randomized(route_name, desired_path, scenario_key)
+    st.session_state.selected_scenario = scenario_key
+    st.session_state.experience_mode = "simulation"
+    st.session_state.game = game
+    st.session_state.pending_week_review = False
+    st.session_state.review_snapshot_week = None
+    st.session_state.results_view = "summary"
+    st.session_state.analysis_week = 0
+    st.session_state.evidence_employee_id = None
+    for key in ["selected_employee", "selected_employee_from", "selected_employee_to"]:
+        if key in st.session_state:
+            del st.session_state[key]
+
+
+def load_demo_week_review(scenario_key, route_name, review_week, desired_tier=None):
+    game = autoplay_demo_route_until_week(route_name, seed=0, scenario_key=scenario_key, stop_week=review_week)
+    st.session_state.selected_scenario = scenario_key
+    st.session_state.experience_mode = "simulation"
+    st.session_state.game = game
+    st.session_state.pending_week_review = True
+    st.session_state.review_snapshot_week = review_week
+    st.session_state.results_view = "summary"
+    st.session_state.analysis_week = 0
+    st.session_state.evidence_employee_id = None
+
+
+def load_demo_week_start(scenario_key, route_name, week):
+    if week <= 1:
+        reset_game(scenario_key, "simulation")
+        return
+    game = autoplay_demo_route_until_week(route_name, seed=0, scenario_key=scenario_key, stop_week=week - 1)
+    st.session_state.selected_scenario = scenario_key
+    st.session_state.experience_mode = "simulation"
+    st.session_state.game = game
+    st.session_state.pending_week_review = False
+    st.session_state.review_snapshot_week = None
+    st.session_state.results_view = "summary"
+    st.session_state.analysis_week = 0
+    st.session_state.evidence_employee_id = None
+    for key in ["scenario_02_workshop_step", "scenario_02_workshop_choices"]:
+        if key in st.session_state:
+            del st.session_state[key]
+
+
 def ensure_state():
     if "selected_scenario" not in st.session_state:
         st.session_state.selected_scenario = DEFAULT_SCENARIO_KEY
+    st.session_state.setdefault("experience_mode", "simulation")
     if "game" not in st.session_state:
-        reset_game(st.session_state.selected_scenario)
+        reset_game(st.session_state.selected_scenario, st.session_state.get("experience_mode", "simulation"))
     else:
         st.session_state.setdefault("pending_week_review", False)
         st.session_state.setdefault("results_view", "summary")
         st.session_state.setdefault("analysis_week", 0)
         st.session_state.setdefault("evidence_employee_id", None)
+        st.session_state.setdefault("scenario_02_workshop_step", 0)
+        st.session_state.setdefault("scenario_02_workshop_choices", {})
 
 
 def people_label(count):
@@ -290,7 +380,7 @@ def risk_read(value):
 
 def determine_summary_title(summary_branch, latest):
     outcome_tier = (latest or {}).get('scenario_outcome_tier')
-    if outcome_tier == 'Fail':
+    if outcome_tier == 'Fail' or summary_branch == 'spiralled':
         return 'The situation spiralled.'
     if summary_branch == 'high_strain_count':
         return 'You managed the situation.'
@@ -408,8 +498,8 @@ def _shared_analysis_positions(player_snapshot, benchmark_snapshot):
     return _snapshot_positions(base)
 
 
-def _draw_snapshot_map(snapshot, title, metric_key, positions=None):
-    fig, ax = plt.subplots(figsize=(6.8, 4.8))
+def _draw_snapshot_map(snapshot, title, metric_key, positions=None, figsize=(6.8, 4.8)):
+    fig, ax = plt.subplots(figsize=figsize)
     positions = positions or _snapshot_positions(snapshot)
     employees = snapshot.get("employees", []) if snapshot else []
     employee_lookup = {employee["id"]: employee for employee in employees}
@@ -458,12 +548,12 @@ def _draw_snapshot_map(snapshot, title, metric_key, positions=None):
     return fig
 
 
-def draw_analysis_heatmap(snapshot, title, positions=None):
-    return _draw_snapshot_map(snapshot, title, "true_strain", positions=positions)
+def draw_analysis_heatmap(snapshot, title, positions=None, figsize=(6.8, 4.8)):
+    return _draw_snapshot_map(snapshot, title, "true_strain", positions=positions, figsize=figsize)
 
 
-def draw_observed_risk_snapshot_map(snapshot, title, positions=None):
-    return _draw_snapshot_map(snapshot, title, "observed_risk", positions=positions)
+def draw_observed_risk_snapshot_map(snapshot, title, positions=None, figsize=(6.8, 4.8)):
+    return _draw_snapshot_map(snapshot, title, "observed_risk", positions=positions, figsize=figsize)
 
 
 def core_group_summary(snapshot):
@@ -494,6 +584,92 @@ def core_group_summary(snapshot):
         "names_text": names_text,
         "avg_true": avg_true,
     }
+
+
+def _observed_strain_label(value):
+    if value >= 0.75:
+        return "High"
+    if value >= 0.45:
+        return "Moderate"
+    return "Low"
+
+
+def _scenario_two_management_priority(row, roles):
+    node_id = row.get("id")
+    if node_id == roles.get("hidden_strain_employee"):
+        if float(row.get("absorbed_workload", 0.0)) >= 0.45:
+            return "Hidden risk"
+        return "Monitor"
+    if node_id == roles.get("focal_employee"):
+        if float(row.get("observed_risk", 0.0)) >= 0.55:
+            return "Visible issue"
+        return "Monitor"
+    if float(row.get("absorbed_workload", 0.0)) >= 0.30:
+        return "Support"
+    return "Watch"
+
+
+def render_scenario_two_management_report(snapshot, title):
+    if not snapshot:
+        return
+    roles = snapshot.get("scenario_roles", {})
+    employees = snapshot.get("employees", [])
+    order = [
+        roles.get("focal_employee"),
+        roles.get("hidden_strain_employee"),
+        roles.get("spillover_employee"),
+        roles.get("cluster_anchor"),
+    ]
+    employee_lookup = {row.get("id"): row for row in employees}
+    ordered_rows = [employee_lookup[node_id] for node_id in order if node_id in employee_lookup]
+    ordered_rows.extend(
+        row for row in employees
+        if row.get("id") not in {item.get("id") for item in ordered_rows}
+    )
+
+    table_rows = []
+    for row in ordered_rows:
+        observed = float(row.get("observed_risk", 0.0))
+        workload = float(row.get("absorbed_workload", 0.0))
+        role_name = str(row.get("scenario_role") or "").replace("_", " ").title()
+        table_rows.append(
+            {
+                "name": row.get("name", "Unknown"),
+                "role": role_name,
+                "observed": f"{round(observed * 100)}% ({_observed_strain_label(observed)})",
+                "workload": f"{round(workload * 100)}% ({visible_load_label(workload)})",
+                "priority": _scenario_two_management_priority(row, roles),
+            }
+        )
+
+    st.markdown(f'<div class="centered-results-text"><strong>{title}</strong></div>', unsafe_allow_html=True)
+    table_html = [
+        "<table style='width:100%; border-collapse:collapse; margin-top:0.5rem;'>",
+        "<thead>",
+        "<tr style='border-bottom:1px solid #e5dccb;'>",
+        "<th style='text-align:left; padding:0.4rem 0.35rem; font-size:0.8rem; color:#6b7280;'>Person</th>",
+        "<th style='text-align:left; padding:0.4rem 0.35rem; font-size:0.8rem; color:#6b7280;'>Role</th>",
+        "<th style='text-align:left; padding:0.4rem 0.35rem; font-size:0.8rem; color:#6b7280;'>Observed Strain</th>",
+        "<th style='text-align:left; padding:0.4rem 0.35rem; font-size:0.8rem; color:#6b7280;'>Absorbed Workload</th>",
+        "<th style='text-align:left; padding:0.4rem 0.35rem; font-size:0.8rem; color:#6b7280;'>Management Read</th>",
+        "</tr>",
+        "</thead>",
+        "<tbody>",
+    ]
+    for row in table_rows:
+        table_html.extend(
+            [
+                "<tr style='border-bottom:1px solid #f1ead9;'>",
+                f"<td style='padding:0.45rem 0.35rem; color:#1f2937; font-weight:600;'>{row['name']}</td>",
+                f"<td style='padding:0.45rem 0.35rem; color:#4b5563;'>{row['role']}</td>",
+                f"<td style='padding:0.45rem 0.35rem; color:#1f2937;'>{row['observed']}</td>",
+                f"<td style='padding:0.45rem 0.35rem; color:#1f2937;'>{row['workload']}</td>",
+                f"<td style='padding:0.45rem 0.35rem; color:#7c5a17; font-weight:600;'>{row['priority']}</td>",
+                "</tr>",
+            ]
+        )
+    table_html.extend(["</tbody>", "</table>"])
+    st.markdown("".join(table_html), unsafe_allow_html=True)
 
 
 def format_actions_for_analysis(snapshot):
@@ -574,6 +750,463 @@ def build_week_explanation_summary(snapshot, previous_snapshot):
         elif cluster_delta < -0.02:
             lines.append("The surrounding group ended the week on a steadier footing.")
     return lines[:3]
+
+
+def _scenario_two_choice_key(checkpoint_id, role_id):
+    return f"{checkpoint_id}_{role_id}"
+
+
+def _scenario_two_selected_option(checkpoint_id, role_id):
+    choices = st.session_state.get("scenario_02_workshop_choices", {})
+    option_id = choices.get(_scenario_two_choice_key(checkpoint_id, role_id))
+    checkpoint = next(
+        (item for item in SCENARIO_02_WORKSHOP_MOCK["checkpoints"] if item["id"] == checkpoint_id),
+        None,
+    )
+    if checkpoint is None:
+        return None
+    role_block = next((role for role in checkpoint.get("roles", []) if role["role_id"] == role_id), None)
+    if role_block is None:
+        return None
+    return next((option for option in role_block["options"] if option["id"] == option_id), None)
+
+
+def _scenario_two_checkpoint_scores():
+    results = []
+    for checkpoint in SCENARIO_02_WORKSHOP_MOCK["checkpoints"]:
+        role_scores = {}
+        for role_block in checkpoint.get("roles", []):
+            selected = _scenario_two_selected_option(checkpoint["id"], role_block["role_id"])
+            role_scores[role_block["role_id"]] = selected.get("score", 0) if selected else None
+        results.append({
+            "id": checkpoint["id"],
+            "scores": role_scores,
+        })
+    return results
+
+
+def _scenario_two_percent(score, max_score):
+    if max_score <= 0:
+        return 0
+    return round((score / max_score) * 100)
+
+
+def _scenario_two_review_metrics():
+    checkpoint_scores = _scenario_two_checkpoint_scores()
+    manager_values = []
+    maya_values = []
+    riley_values = []
+    for item in checkpoint_scores:
+        scores = item["scores"]
+        if scores.get("manager") is not None:
+            manager_values.append(scores["manager"])
+        if scores.get("maya") is not None:
+            maya_values.append(scores["maya"])
+        if scores.get("riley") is not None:
+            riley_values.append(scores["riley"])
+
+    manager_total = sum(manager_values)
+    maya_total = sum(maya_values)
+    riley_total = sum(riley_values)
+    manager_pct = _scenario_two_percent(manager_total, len(manager_values) * 3) if manager_values else 0
+    maya_pct = _scenario_two_percent(maya_total, len(maya_values) * 3) if maya_values else 0
+    riley_pct = _scenario_two_percent(riley_total, len(riley_values) * 3) if riley_values else 0
+    team_pct = round((manager_pct * 0.4) + (maya_pct * 0.4) + (riley_pct * 0.2))
+
+    aligned_checkpoint_indices = []
+    for index, item in enumerate(checkpoint_scores):
+        manager_score = item["scores"].get("manager")
+        maya_score = item["scores"].get("maya")
+        if manager_score is not None and maya_score is not None and manager_score >= 2 and maya_score >= 2:
+            aligned_checkpoint_indices.append(index)
+    if aligned_checkpoint_indices:
+        timing = "Early alignment" if aligned_checkpoint_indices[0] == 0 else "Late alignment"
+    else:
+        timing = "No real alignment"
+
+    first_pair = None
+    last_pair = None
+    for item in checkpoint_scores:
+        if item["scores"].get("manager") is not None and item["scores"].get("maya") is not None:
+            total = item["scores"]["manager"] + item["scores"]["maya"]
+            if first_pair is None:
+                first_pair = total
+            last_pair = total
+    if first_pair is None or last_pair is None:
+        trajectory = "Drifted"
+    elif last_pair >= 5 and first_pair >= 5:
+        trajectory = "Strengthened"
+    elif last_pair >= 5 and first_pair < 5:
+        trajectory = "Recovered"
+    elif last_pair < 5 and first_pair >= 5:
+        trajectory = "Drifted"
+    else:
+        trajectory = "Hardened"
+
+    if team_pct >= 75 and max(manager_pct, maya_pct) >= 75:
+        ending = "aligned"
+    elif manager_pct < 60 and maya_pct >= 60:
+        ending = "misaligned_manager"
+    elif manager_pct >= 60 and maya_pct < 60:
+        ending = "misaligned_employee"
+    else:
+        ending = "total_misalignment"
+
+    if team_pct >= 70 and riley_pct >= 50:
+        human_cost = "Low"
+    elif team_pct >= 45:
+        human_cost = "Moderate"
+    else:
+        human_cost = "High"
+
+    return {
+        "manager_pct": manager_pct,
+        "maya_pct": maya_pct,
+        "riley_pct": riley_pct,
+        "team_pct": team_pct,
+        "timing": timing,
+        "trajectory": trajectory,
+        "ending": ending,
+        "human_cost": human_cost,
+    }
+
+
+def _scenario_two_checkpoint_readout(checkpoint_id):
+    scores = {
+        role_id: (_scenario_two_selected_option(checkpoint_id, role_id) or {}).get("score")
+        for role_id in ("manager", "riley", "maya")
+    }
+    known_scores = [score for score in scores.values() if score is not None]
+    if not known_scores:
+        return None
+    avg_score = sum(known_scores) / len(known_scores)
+    if avg_score >= 2.25:
+        visible_friction = "Medium"
+        hidden_carrying = "Low"
+        team_alignment = "Strong"
+        note = (
+            "The team did not eliminate pressure, but it began to treat the right problem. Riley stayed "
+            "in view without becoming the whole story, and there was less reliance on invisible rescue work."
+        )
+    elif avg_score >= 1.25:
+        visible_friction = "Medium"
+        hidden_carrying = "Medium"
+        team_alignment = "Partial"
+        note = (
+            "Some of the deeper pattern became easier to see, even if the team did not fully act on it yet. "
+            "Riley remained the loudest signal, while more of the real cost was being absorbed elsewhere."
+        )
+    else:
+        visible_friction = "High"
+        hidden_carrying = "High"
+        team_alignment = "Weak"
+        note = (
+            "The team kept getting through the fortnight more by adaptation than alignment. Riley remained "
+            "the easiest place to focus concern, while more of the cost quietly routed through Maya."
+        )
+    return {
+        "visible_friction": visible_friction,
+        "hidden_carrying": hidden_carrying,
+        "team_alignment": team_alignment,
+        "note": note,
+    }
+
+
+def _scenario_two_workshop_sequence():
+    sequence = [{"type": "opening"}]
+    for checkpoint in SCENARIO_02_WORKSHOP_MOCK["checkpoints"]:
+        role_ids = [role["role_id"] for role in checkpoint.get("roles", [])]
+        if "manager" in role_ids and len(role_ids) > 1:
+            sequence.append({"type": "checkpoint_manager", "checkpoint_id": checkpoint["id"]})
+            sequence.append({"type": "checkpoint_employee", "checkpoint_id": checkpoint["id"]})
+            sequence.append({"type": "minutes", "checkpoint_id": checkpoint["id"]})
+        else:
+            sequence.append({"type": "checkpoint", "checkpoint_id": checkpoint["id"]})
+        if len(checkpoint.get("roles", [])) > 1 and "manager" not in role_ids:
+            sequence.append({"type": "minutes", "checkpoint_id": checkpoint["id"]})
+    sequence.append({"type": "review"})
+    return sequence
+
+
+def _scenario_two_alignment_band(checkpoint_id):
+    readout = _scenario_two_checkpoint_readout(checkpoint_id)
+    if not readout:
+        return "partial"
+    label = readout["team_alignment"]
+    if label == "Strong":
+        return "strong"
+    if label == "Weak":
+        return "weak"
+    return "partial"
+
+
+def draw_scenario_two_alignment_triangle(band):
+    band = band or "partial"
+    positions = {
+        "strong": {
+            "Manager": (0.50, 0.18),
+            "Riley": (0.34, 0.58),
+            "Maya": (0.66, 0.56),
+        },
+        "partial": {
+            "Manager": (0.48, 0.14),
+            "Riley": (0.26, 0.66),
+            "Maya": (0.72, 0.58),
+        },
+        "weak": {
+            "Manager": (0.48, 0.10),
+            "Riley": (0.18, 0.76),
+            "Maya": (0.80, 0.62),
+        },
+    }
+    palette = {
+        "strong": {"line": "#4f7a52", "fill": "#dfe9dd", "node": "#2f5b33"},
+        "partial": {"line": "#9a6b2f", "fill": "#efe5d3", "node": "#7a541e"},
+        "weak": {"line": "#8e4b3d", "fill": "#f1ddd7", "node": "#733528"},
+    }
+    current_positions = positions.get(band, positions["partial"])
+    colors = palette.get(band, palette["partial"])
+
+    fig, ax = plt.subplots(figsize=(4.8, 4.2))
+    ordered = ["Manager", "Riley", "Maya", "Manager"]
+    xs = [current_positions[label][0] for label in ordered]
+    ys = [current_positions[label][1] for label in ordered]
+    ax.fill(xs, ys, color=colors["fill"], alpha=0.95)
+    ax.plot(xs, ys, color=colors["line"], linewidth=2.4)
+
+    for label, (x, y) in current_positions.items():
+        ax.scatter([x], [y], s=900, color=colors["node"], edgecolors="#fffdf8", linewidths=2.0, zorder=3)
+        ax.text(x, y, label, color="#fffdf8", ha="center", va="center", fontsize=10, fontweight="bold", zorder=4)
+
+    ax.set_xlim(0.05, 0.95)
+    ax.set_ylim(0.85, 0.0)
+    ax.axis("off")
+    ax.set_title("Alignment At The End Of The Fortnight", fontsize=12, color="#2f2410")
+    plt.tight_layout()
+    return fig
+
+
+def _render_scenario_two_option_block(checkpoint_id, role_block):
+    role_key = _scenario_two_choice_key(checkpoint_id, role_block["role_id"])
+    options = role_block["options"]
+    option_labels = {
+        f"{option['label']}": option["id"]
+        for option in options
+    }
+    current_choice = st.session_state.get("scenario_02_workshop_choices", {}).get(role_key, options[0]["id"])
+    if current_choice not in [option["id"] for option in options]:
+        current_choice = options[0]["id"]
+    selected_label = next(
+        label for label, option_id in option_labels.items()
+        if option_id == current_choice
+    )
+    chosen_label = st.radio(
+        role_block["title"],
+        list(option_labels.keys()),
+        index=list(option_labels.keys()).index(selected_label),
+        key=f"radio_{role_key}",
+    )
+    selected_option = next(option for option in options if option["id"] == option_labels[chosen_label])
+    st.session_state.scenario_02_workshop_choices[role_key] = selected_option["id"]
+    st.caption(role_block["prompt"])
+    st.markdown(
+        f"<div class='resolution-note'>{selected_option['body']}</div>",
+        unsafe_allow_html=True,
+    )
+    if selected_option.get("intent"):
+        st.caption(f"Intent: {selected_option['intent']}")
+
+
+def render_scenario_two_workshop_mock():
+    st.session_state.setdefault("scenario_02_workshop_step", 0)
+    st.session_state.setdefault("scenario_02_workshop_choices", {})
+    step = st.session_state["scenario_02_workshop_step"]
+    checkpoints = {
+        checkpoint["id"]: checkpoint
+        for checkpoint in SCENARIO_02_WORKSHOP_MOCK["checkpoints"]
+    }
+    sequence = _scenario_two_workshop_sequence()
+    total_steps = len(sequence)
+    current_step = sequence[step]
+
+    if current_step["type"] == "opening":
+        st.markdown('<div class="shell-card">', unsafe_allow_html=True)
+        st.markdown(f'<div class="hero-title">{SCENARIO_02_WORKSHOP_MOCK["title"]}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="hero-subtitle">{SCENARIO_02_WORKSHOP_MOCK["premise"]}</div>',
+            unsafe_allow_html=True,
+        )
+        st.write(SCENARIO_02_WORKSHOP_MOCK["instruction"])
+        st.markdown('<hr class="subtle-section-break" />', unsafe_allow_html=True)
+        for role in SCENARIO_02_WORKSHOP_MOCK["roles"]:
+            st.markdown(
+                f"<div class='employee-summary'><strong>{role['name']}</strong><br>{role['summary']}</div>",
+                unsafe_allow_html=True,
+            )
+        st.markdown('</div>', unsafe_allow_html=True)
+        if st.button("Begin Workshop", type="primary", width="stretch"):
+            st.session_state["scenario_02_workshop_step"] = 1
+            st.rerun()
+        return
+
+    if current_step["type"] in {"checkpoint", "checkpoint_manager", "checkpoint_employee"}:
+        checkpoint = checkpoints[current_step["checkpoint_id"]]
+        step_type = current_step["type"]
+        if step_type == "checkpoint_manager":
+            role_blocks = [role for role in checkpoint["roles"] if role["role_id"] == "manager"]
+            kicker = checkpoint["kicker"]
+            heading = checkpoint["heading"]
+            narrative = checkpoint["narrative"]
+            signals = checkpoint["signals"]
+        elif step_type == "checkpoint_employee":
+            role_blocks = [role for role in checkpoint["roles"] if role["role_id"] != "manager"]
+            kicker = "Employee Response"
+            heading = f"{checkpoint['heading']}: How The Team Responds"
+            narrative = (
+                "The manager has set the direction for the next fortnight. Riley and Maya now respond "
+                "from inside the pressure they are actually carrying."
+            )
+            signals = [
+                "Riley is looking for relief in whatever form still feels available.",
+                "Maya has to decide whether to keep carrying the hidden work or make it discussable.",
+                "What the team does next will shape how the fortnight actually lands.",
+            ]
+        else:
+            role_blocks = checkpoint["roles"]
+            kicker = checkpoint["kicker"]
+            heading = checkpoint["heading"]
+            narrative = checkpoint["narrative"]
+            signals = checkpoint["signals"]
+
+        st.markdown('<div class="shell-card">', unsafe_allow_html=True)
+        st.markdown(f"<div class='section-label'>{kicker}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='title-band-main'>{heading}</div>", unsafe_allow_html=True)
+        st.write(narrative)
+        st.markdown("<ul class='signal-list'>" + "".join(f"<li>{signal}</li>" for signal in signals) + "</ul>", unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        if len(role_blocks) == 1:
+            st.markdown('<div class="soft-card">', unsafe_allow_html=True)
+            _render_scenario_two_option_block(checkpoint["id"], role_blocks[0])
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="soft-card">', unsafe_allow_html=True)
+            columns = st.columns(len(role_blocks))
+            for column, role_block in zip(columns, role_blocks):
+                with column:
+                    _render_scenario_two_option_block(checkpoint["id"], role_block)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="soft-card">', unsafe_allow_html=True)
+        st.markdown('<div class="centered-results-text"><strong>Reflection</strong></div>', unsafe_allow_html=True)
+        for prompt in checkpoint["facilitator"]:
+            st.markdown(f"<div class='centered-results-text'>{prompt}</div>", unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        back_col, next_col = st.columns(2)
+        if back_col.button("Back", width="stretch", disabled=step == 1):
+            st.session_state["scenario_02_workshop_step"] = max(0, step - 1)
+            st.rerun()
+        next_label = "Continue" if step_type == "checkpoint_manager" else "Lock Choices"
+        if step_type == "checkpoint":
+            next_label = "Lock Choices"
+        if next_col.button(next_label, type="primary", width="stretch"):
+            st.session_state["scenario_02_workshop_step"] = min(total_steps - 1, step + 1)
+            st.rerun()
+        return
+
+    if current_step["type"] == "minutes":
+        checkpoint = checkpoints[current_step["checkpoint_id"]]
+        readout = _scenario_two_checkpoint_readout(checkpoint["id"])
+        st.markdown('<div class="shell-card">', unsafe_allow_html=True)
+        st.markdown('<div class="centered-results-text"><strong>Fortnight Minutes</strong></div>', unsafe_allow_html=True)
+        st.markdown("<div class='centered-miniheader'>What happened after the meeting</div>", unsafe_allow_html=True)
+        minutes_band = _scenario_two_alignment_band(checkpoint["id"])
+        minutes_copy = checkpoint.get("minutes", {}).get(minutes_band, {})
+        minutes_col, visual_col = st.columns([1.25, 1])
+        with minutes_col:
+            sections = [
+                ("Agreed in the meeting", minutes_copy.get("agreed", "")),
+                ("What became visible", minutes_copy.get("visible", "")),
+                ("What was carried quietly", minutes_copy.get("quiet", "")),
+                ("What this meant for the demo", minutes_copy.get("meaning", "")),
+            ]
+            for label, body in sections:
+                if body:
+                    st.markdown(
+                        f"<div class='employee-summary'><strong>{label}</strong><br>{body}</div>",
+                        unsafe_allow_html=True,
+                    )
+        with visual_col:
+            st.pyplot(draw_scenario_two_alignment_triangle(minutes_band), width="stretch")
+        if readout:
+            readout_cols = st.columns(3)
+            labels = [
+                ("Visible friction", readout["visible_friction"]),
+                ("Hidden carrying", readout["hidden_carrying"]),
+                ("Team alignment", readout["team_alignment"]),
+            ]
+            for column, (label, value) in zip(readout_cols, labels):
+                with column:
+                    st.markdown(
+                        f"<div class='employee-summary'><strong>{label}</strong><br>{value}</div>",
+                        unsafe_allow_html=True,
+                    )
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        back_col, next_col = st.columns(2)
+        if back_col.button("Back", width="stretch"):
+            st.session_state["scenario_02_workshop_step"] = max(0, step - 1)
+            st.rerun()
+        next_label = "Review The Demo" if sequence[step + 1]["type"] == "review" else "Continue"
+        if next_col.button(next_label, type="primary", width="stretch"):
+            st.session_state["scenario_02_workshop_step"] = step + 1
+            st.rerun()
+        return
+
+    metrics = _scenario_two_review_metrics()
+    review = SCENARIO_02_WORKSHOP_MOCK["review_copy"][metrics["ending"]]
+    st.markdown('<div class="shell-card">', unsafe_allow_html=True)
+    st.markdown('<div class="centered-results-text"><strong>Client Demo Review</strong></div>', unsafe_allow_html=True)
+    st.markdown(f"<h2 class='centered-outcome'>{review['title']}</h2>", unsafe_allow_html=True)
+    st.markdown(f"<div class='centered-results-text'>{review['outcome']}</div>", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    score_cols = st.columns(4)
+    score_items = [
+        ("Riley Alignment", f"{metrics['riley_pct']}%"),
+        ("Maya Alignment", f"{metrics['maya_pct']}%"),
+        ("Manager Alignment", f"{metrics['manager_pct']}%"),
+        ("Team Alignment", f"{metrics['team_pct']}%"),
+    ]
+    for column, (label, value) in zip(score_cols, score_items):
+        with column:
+            st.markdown(
+                f"<div class='employee-summary'><strong>{label}</strong><br>{value}</div>",
+                unsafe_allow_html=True,
+            )
+
+    supporting_cols = st.columns(3)
+    supporting_items = [
+        ("Timing", metrics["timing"]),
+        ("Human Cost", metrics["human_cost"]),
+        ("Trajectory", metrics["trajectory"]),
+    ]
+    for column, (label, value) in zip(supporting_cols, supporting_items):
+        with column:
+            st.markdown(
+                f"<div class='employee-summary'><strong>{label}</strong><br>{value}</div>",
+                unsafe_allow_html=True,
+            )
+
+    st.markdown('<div class="shell-card">', unsafe_allow_html=True)
+    for line in [review["manager"], review["maya"], review["riley"], review["shared"], SCENARIO_02_WORKSHOP_MOCK["review_copy"]["riley_note"]]:
+        st.markdown(f"<div class='centered-results-text'>{line}</div>", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    if st.button("Back", width="stretch"):
+        st.session_state["scenario_02_workshop_step"] = max(0, step - 1)
+        st.rerun()
 
 
 def render_header(vm, game):
@@ -684,6 +1317,16 @@ def render_evidence(vm, game):
         elif "network_graph" in vm.evidence_modules:
             st.markdown('<div class="soft-card">', unsafe_allow_html=True)
             st.pyplot(draw_network_chart(game), width="stretch")
+            snapshot = build_opening_snapshot(game)
+            summary = core_group_summary(snapshot)
+            if summary:
+                st.markdown(
+                    (
+                        f'<div class="centered-results-text"><strong>{summary["focal_name"]} and the working group</strong> '
+                        f'are highlighted on the chart.</div>'
+                    ),
+                    unsafe_allow_html=True,
+                )
             st.markdown('</div>', unsafe_allow_html=True)
 
 
@@ -803,9 +1446,20 @@ def render_week_resolution(snapshot, previous_snapshot):
             st.pyplot(draw_observed_risk_snapshot_map(previous_snapshot, "Before", positions=shared_positions), width="stretch")
         with after_col:
             st.pyplot(draw_observed_risk_snapshot_map(snapshot, "After", positions=shared_positions), width="stretch")
+        if game.scenario == "scenario_01":
+            summary = core_group_summary(snapshot)
+            if summary:
+                st.markdown(
+                    (
+                        f'<div class="centered-results-text"><strong>{summary["focal_name"]} and the working group</strong> '
+                        f'are highlighted on the charts.</div>'
+                    ),
+                    unsafe_allow_html=True,
+                )
 
     if st.button("Continue", type="primary", width="stretch"):
         st.session_state.pending_week_review = False
+        st.session_state.review_snapshot_week = None
         clear_diagnosis_box()
         st.rerun()
 
@@ -817,10 +1471,21 @@ def render_final_score(game):
     benchmark_history = build_benchmark_history(game, benchmark_name="stabilising_response")
     latest_snapshot = history[-1] if history else None
     player_avg = cluster_strain_avg(latest_snapshot) if latest_snapshot else None
+    benchmark_latest = _analysis_snapshot_for_week(benchmark_history, game.max_weeks)
+    hidden_comparison = (
+        scenario_two_hidden_strain_comparison(latest_snapshot, benchmark_latest)
+        if game.scenario == "scenario_02"
+        else None
+    )
 
     st.markdown('<div class="shell-card">', unsafe_allow_html=True)
     st.markdown('<h2 class="centered-outcome">Final Score</h2>', unsafe_allow_html=True)
-    if player_avg is not None:
+    if game.scenario == "scenario_02" and hidden_comparison is not None:
+        st.markdown(
+            f'<div class="summary-impact">{hidden_comparison["hidden_name"]} actual end strain: {round(hidden_comparison["player_hidden_strain"] * 100)}%</div>',
+            unsafe_allow_html=True,
+        )
+    elif player_avg is not None:
         st.markdown(
             f'<div class="summary-impact">Core-group strain by launch: {round(player_avg * 100)}%</div>',
             unsafe_allow_html=True,
@@ -830,35 +1495,43 @@ def render_final_score(game):
     st.markdown('<div class="soft-card">', unsafe_allow_html=True)
     scenario_targets = {
         "scenario_01": 0.30,
-        "scenario_02": 0.52,
     }
     target_avg = scenario_targets.get(game.scenario)
-    if player_avg is not None and target_avg is not None:
+    if game.scenario == "scenario_02" and hidden_comparison is not None:
+        target_line = (
+            f'A good target for this scenario is {round(SCENARIO_02_HIDDEN_STRAIN_TARGET * 100)}% or lower. '
+            'That gives you a clear number to aim for next run.'
+        )
+        lesson_line = None
+    elif player_avg is not None and target_avg is not None:
         if player_avg <= target_avg + 0.005:
-            copy = (
+            target_line = (
                 f'This is better than the target score of {round(target_avg * 100)}% or lower. '
                 'Well done.'
             )
+            lesson_line = None
         else:
-            copy = (
+            target_line = (
                 f'A good target for this scenario is {round(target_avg * 100)}% or lower. '
                 'That gives you a clear number to aim for next run.'
             )
+            lesson_line = None
     elif player_avg is not None:
-        copy = (
+        target_line = (
             'Lower is better, so this gives you a clear number to improve on next run.'
         )
+        lesson_line = None
     else:
-        copy = 'There was not enough history to calculate a final score for this run.'
-    st.markdown(f'<div class="centered-results-text">{copy}</div>', unsafe_allow_html=True)
+        target_line = 'There was not enough history to calculate a final score for this run.'
+        lesson_line = None
+    st.markdown(f'<div class="centered-results-text">{target_line}</div>', unsafe_allow_html=True)
+    if lesson_line:
+        st.markdown(f'<div class="centered-results-text">{lesson_line}</div>', unsafe_allow_html=True)
+
     st.markdown('</div>', unsafe_allow_html=True)
 
-    back_col, new_run_col = st.columns(2)
-    if back_col.button("Back To Analysis", width="stretch"):
+    if st.button("Back To Analysis", width="stretch"):
         st.session_state.results_view = "analysis"
-        st.rerun()
-    if new_run_col.button("Start New Run", type="primary", width="stretch"):
-        reset_game()
         st.rerun()
 
 
@@ -867,6 +1540,11 @@ def render_end_screen(game):
     latest = history[-1] if history else {}
     benchmark_history = build_benchmark_history(game, benchmark_name="stabilising_response")
     benchmark_latest = _analysis_snapshot_for_week(benchmark_history, game.max_weeks)
+    hidden_strain_comparison = (
+        scenario_two_hidden_strain_comparison(latest, benchmark_latest)
+        if game.scenario == "scenario_02"
+        else None
+    )
     summary_branch = determine_summary_branch(game, history, latest, benchmark_history, benchmark_latest)
     summary_title = determine_summary_title(summary_branch, latest)
     summary_reinforcing = False
@@ -896,7 +1574,8 @@ def render_end_screen(game):
         authored_end_copy = scenario_end_screen_copy(game, history, latest, benchmark_history, benchmark_latest)
         if authored_end_copy:
             st.markdown('<div class="shell-card">', unsafe_allow_html=True)
-            st.markdown('<div class="centered-results-text"><strong>End of Launch Debrief</strong></div>', unsafe_allow_html=True)
+            debrief_label = "End of Demo Debrief" if game.scenario == "scenario_02" else "End of Launch Debrief"
+            st.markdown(f'<div class="centered-results-text"><strong>{debrief_label}</strong></div>', unsafe_allow_html=True)
             st.markdown(f'<h2 class="centered-outcome">{authored_end_copy["outcome"]}</h2>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -919,9 +1598,12 @@ def render_end_screen(game):
         if not authored_end_copy and player_high_strain > benchmark_high_strain:
             if summary_title == "The situation spiralled.":
                 if game.scenario == "scenario_02":
+                    hidden_name = (hidden_strain_comparison or {}).get("hidden_name", "Maya")
+                    player_hidden = round(((hidden_strain_comparison or {}).get("player_hidden_strain", 0.0)) * 100)
+                    benchmark_hidden = round(((hidden_strain_comparison or {}).get("benchmark_hidden_strain", 0.0)) * 100)
                     impact_text = (
-                        "The demo pressure kept spilling through the surrounding pocket of the team."
-                        f'<br><br>With a stronger response, {benchmark_high_strain} {people_label(benchmark_high_strain)} in the core group could have ended under high strain instead of {player_high_strain}.'
+                        f"The demo pressure kept spilling outward because {hidden_name} was left carrying too much of it."
+                        f"<br><br>{hidden_name} finished at {player_hidden}% actual strain. With a stronger response, that could have been closer to {benchmark_hidden}%."
                     )
                 else:
                     impact_text = (
@@ -930,9 +1612,12 @@ def render_end_screen(game):
                     )
             else:
                 if game.scenario == "scenario_02":
+                    hidden_name = (hidden_strain_comparison or {}).get("hidden_name", "Maya")
+                    player_hidden = round(((hidden_strain_comparison or {}).get("player_hidden_strain", 0.0)) * 100)
+                    benchmark_hidden = round(((hidden_strain_comparison or {}).get("benchmark_hidden_strain", 0.0)) * 100)
                     impact_text = (
-                        f"The demo got through, but {player_high_strain} {people_label(player_high_strain)} in the core group were still carrying too much pressure."
-                        f'<br><br>With a stronger response, that could have been {benchmark_high_strain}.'
+                        f"The demo got through, but {hidden_name} still ended the run carrying too much pressure."
+                        f"<br><br>{hidden_name}'s actual end strain was {player_hidden}%. With a stronger response, that could have been closer to {benchmark_hidden}%."
                     )
                 else:
                     impact_text = (
@@ -966,9 +1651,12 @@ def render_end_screen(game):
                 st.markdown('</div>', unsafe_allow_html=True)
             elif end_comparison and end_comparison["benchmark_cluster_avg"] + 0.02 < end_comparison["player_cluster_avg"]:
                 if game.scenario == "scenario_02":
+                    hidden_name = (hidden_strain_comparison or {}).get("hidden_name", "Maya")
+                    player_hidden = round(((hidden_strain_comparison or {}).get("player_hidden_strain", 0.0)) * 100)
+                    benchmark_hidden = round(((hidden_strain_comparison or {}).get("benchmark_hidden_strain", 0.0)) * 100)
                     impact_text = (
-                        "The demo got through, but the core group was still carrying more strain than it needed to."
-                        "<br><br>A stronger response would have left the group in a better place."
+                        f"The demo got through, but {hidden_name} still ended the run carrying more strain than she needed to."
+                        f"<br><br>{hidden_name}'s actual end strain was {player_hidden}%. A stronger response would have brought that closer to {benchmark_hidden}%."
                     )
                 else:
                     impact_text = (
@@ -982,14 +1670,11 @@ def render_end_screen(game):
                 )
                 st.markdown('</div>', unsafe_allow_html=True)
 
-        if st.button("Analyse", type="primary", width="stretch"):
+        st.markdown('</div>', unsafe_allow_html=True)
+        if st.button("Analyse Run", type="primary", width="stretch"):
             st.session_state.results_view = "analysis"
             st.session_state.analysis_week = 0
             st.rerun()
-        if st.button("Start New Run", width="stretch"):
-            reset_game()
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
         return
 
     st.markdown('<div class="shell-card">', unsafe_allow_html=True)
@@ -1017,7 +1702,15 @@ def render_end_screen(game):
     selected_snapshot = opening_snapshot if selected_week == 0 else next(
         snapshot for snapshot in history if snapshot["week"] == selected_week
     )
+    previous_analysis_snapshot = None
+    if selected_week > 0:
+        previous_analysis_snapshot = opening_snapshot if selected_week == 1 else next(
+            snapshot for snapshot in history if snapshot["week"] == selected_week - 1
+        )
     benchmark_snapshot = opening_snapshot if selected_week == 0 else _analysis_snapshot_for_week(benchmark_history, selected_week)
+    previous_benchmark_snapshot = None
+    if selected_week > 0:
+        previous_benchmark_snapshot = opening_snapshot if selected_week == 1 else _analysis_snapshot_for_week(benchmark_history, selected_week - 1)
     shared_positions = _shared_analysis_positions(selected_snapshot, benchmark_snapshot)
 
     st.markdown('<div class="results-column">', unsafe_allow_html=True)
@@ -1025,10 +1718,16 @@ def render_end_screen(game):
     left_panel, right_panel = st.columns(2)
     with left_panel:
         if selected_snapshot:
-            st.pyplot(draw_analysis_heatmap(selected_snapshot, "Your Run", positions=shared_positions), width="stretch")
+            if game.scenario == "scenario_02":
+                st.pyplot(draw_riley_maya_observed_vs_actual_chart(selected_snapshot, "Your Run"), width="stretch")
+            else:
+                st.pyplot(draw_observed_risk_snapshot_map(selected_snapshot, "Your Run", positions=shared_positions), width="stretch")
     with right_panel:
         if benchmark_snapshot:
-            st.pyplot(draw_analysis_heatmap(benchmark_snapshot, "Recommended Run", positions=shared_positions), width="stretch")
+            if game.scenario == "scenario_02":
+                st.pyplot(draw_riley_maya_observed_vs_actual_chart(benchmark_snapshot, "Recommended Run"), width="stretch")
+            else:
+                st.pyplot(draw_observed_risk_snapshot_map(benchmark_snapshot, "Recommended Run", positions=shared_positions), width="stretch")
     nav_left, nav_mid, nav_right = st.columns([1, 2, 1])
     current_index = review_weeks.index(selected_week)
     if nav_left.button("Previous Week", width="stretch", disabled=current_index == 0):
@@ -1050,14 +1749,28 @@ def render_end_screen(game):
     if selected_snapshot:
         summary = core_group_summary(selected_snapshot)
         if summary:
-            st.markdown(
-                (
-                    f'<div class="centered-results-text"><strong>{summary["focal_name"]} and the connected core group</strong> '
-                    f'({summary["names_text"]}) are highlighted on the chart. '
-                    f'Their average true strain at this point was {round(summary["avg_true"] * 100)}%.</div>'
-                ),
-                unsafe_allow_html=True,
-            )
+            if game.scenario == "scenario_02":
+                roles = selected_snapshot.get("scenario_roles", {})
+                employees = {employee["id"]: employee for employee in selected_snapshot.get("employees", [])}
+                hidden_row = employees.get(roles.get("hidden_strain_employee"))
+                hidden_name = (hidden_row or {}).get("name", "Maya")
+                hidden_true = float((hidden_row or {}).get("true_strain", 0.0))
+                st.markdown(
+                    (
+                        f'<div class="centered-results-text">{hidden_name}\'s true strain at this point '
+                        f'was {round(hidden_true * 100)}%.</div>'
+                    ),
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    (
+                        f'<div class="centered-results-text"><strong>{summary["focal_name"]} and the working group</strong> '
+                        f'are highlighted on the chart. '
+                        f'Their average true strain at this point was {round(summary["avg_true"] * 100)}%.</div>'
+                    ),
+                    unsafe_allow_html=True,
+                )
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="soft-card">', unsafe_allow_html=True)
@@ -1078,12 +1791,18 @@ def render_end_screen(game):
             benchmark_latest,
         )
         if authored_week_copy:
-            for key in (
+            analysis_keys = [
                 "what_the_situation_called_for",
                 "how_your_choice_landed",
                 "assessment_from_your_starting_point",
                 "what_it_meant_for_your_trajectory",
-            ):
+            ]
+            if selected_week == 1:
+                analysis_keys = [
+                    key for key in analysis_keys
+                    if key != "assessment_from_your_starting_point"
+                ]
+            for key in analysis_keys:
                 line = authored_week_copy.get(key)
                 if line:
                     st.markdown(
@@ -1108,12 +1827,8 @@ def render_end_screen(game):
     st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    back_col, new_run_col = st.columns(2)
-    if back_col.button("Back", width="stretch"):
+    if st.button("Back", width="stretch"):
         st.session_state.results_view = "summary"
-        st.rerun()
-    if new_run_col.button("Start New Run", type="primary", width="stretch"):
-        reset_game()
         st.rerun()
 
 
@@ -1121,16 +1836,128 @@ if not TEST_MODE:
     ensure_state()
     game = st.session_state.game
     vm = build_weekly_view_model(game)
+    scenario_key = st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY)
+    experience_mode = st.session_state.get("experience_mode", "simulation")
 
-    if st.session_state.pending_week_review and not game.game_over:
+    if SHOW_SIDEBAR:
+        st.sidebar.title("Run Controls")
+        st.sidebar.write(PACK_STATUS_TEXT)
+        selected_scenario_key = st.session_state.get("selected_scenario", DEFAULT_SCENARIO_KEY)
+        experience_mode = st.session_state.get("experience_mode", "simulation")
+
+        st.sidebar.markdown("**Simulations**")
+        for scenario_key in SIMULATION_SCENARIOS:
+            label = SCENARIOS[scenario_key].label
+            is_selected = selected_scenario_key == scenario_key and experience_mode == "simulation"
+            button_label = f"{'• ' if is_selected else ''}{label}"
+            if st.sidebar.button(button_label, width="stretch", key=f"nav_sim_{scenario_key}"):
+                if selected_scenario_key != scenario_key or experience_mode != "simulation":
+                    reset_game(scenario_key, "simulation")
+                    st.rerun()
+        st.sidebar.markdown("<div style='height: 0.9rem;'></div>", unsafe_allow_html=True)
+
+        st.sidebar.markdown("**Workshop**")
+        for scenario_key in WORKSHOP_SCENARIOS:
+            label = SCENARIO_02_WORKSHOP_TITLE if scenario_key == "scenario_02" else SCENARIOS[scenario_key].label
+            is_selected = selected_scenario_key == scenario_key and experience_mode == "workshop"
+            button_label = f"{'• ' if is_selected else ''}{label}"
+            if st.sidebar.button(button_label, width="stretch", key=f"nav_workshop_{scenario_key}"):
+                if selected_scenario_key != scenario_key or experience_mode != "workshop":
+                    reset_game(scenario_key, "workshop")
+                    st.rerun()
+        st.sidebar.markdown("---")
+        if selected_scenario_key == "scenario_01" and experience_mode == "simulation":
+            st.sidebar.markdown("**Relevant Runs**")
+            if st.sidebar.button("Spiralled", width="stretch", key="scenario_01_path_spiralled"):
+                load_demo_run("scenario_01", "none", desired_tier="Fail")
+                st.rerun()
+            if st.sidebar.button("Supported Jordan Only", width="stretch", key="scenario_01_path_high_strain"):
+                load_demo_run_for_explicit_path("scenario_01", "relieve", "high_strain_count")
+                st.rerun()
+            if st.sidebar.button("Late Shift", width="stretch", key="scenario_01_path_more_strain"):
+                load_demo_run_for_explicit_path("scenario_01", "mixed", "more_strain_than_needed")
+                st.rerun()
+            if st.sidebar.button("Gold Run", width="stretch", key="scenario_01_path_well_done"):
+                load_demo_run_for_explicit_path("scenario_01", "recommended", "well_done")
+                st.rerun()
+            st.sidebar.markdown("---")
+        if selected_scenario_key == "scenario_02" and experience_mode == "simulation":
+            st.sidebar.markdown("**Relevant Runs**")
+            scenario_02_run_map = {
+                "Missed Hidden Strain": ("reactive_escalation", "Fail"),
+                "Supported Riley Only": ("surface_containment", "Survive"),
+                "Late Recovery": ("late_widening", "Survive"),
+                "Gold Run": ("early_realignment", "Succeed"),
+            }
+            if st.sidebar.button("Missed Hidden Strain", width="stretch", key="scenario_02_path_reactive"):
+                route_name, tier = scenario_02_run_map["Missed Hidden Strain"]
+                load_demo_run("scenario_02", route_name, desired_tier=tier)
+                st.rerun()
+            if st.sidebar.button("Supported Riley Only", width="stretch", key="scenario_02_path_surface"):
+                route_name, tier = scenario_02_run_map["Supported Riley Only"]
+                load_demo_run("scenario_02", route_name, desired_tier=tier)
+                st.rerun()
+            if st.sidebar.button("Late Recovery", width="stretch", key="scenario_02_path_late"):
+                route_name, tier = scenario_02_run_map["Late Recovery"]
+                load_demo_run("scenario_02", route_name, desired_tier=tier)
+                st.rerun()
+            if st.sidebar.button("Gold Run", width="stretch", key="scenario_02_path_early"):
+                route_name, tier = scenario_02_run_map["Gold Run"]
+                load_demo_run("scenario_02", route_name, desired_tier=tier)
+                st.rerun()
+            st.sidebar.markdown("**Screen Tester**")
+            tester_path_label = st.sidebar.selectbox(
+                "Run",
+                [
+                    "Missed Hidden Strain",
+                    "Supported Riley Only",
+                    "Late Recovery",
+                    "Gold Run",
+                ],
+                key="scenario_02_week_tester_path",
+            )
+            tester_week = st.sidebar.selectbox(
+                "Week",
+                [1, 2, 3, 4, 5, 6],
+                format_func=lambda week: f"Week {week}",
+                key="scenario_02_week_tester_week",
+            )
+            tester_screen = st.sidebar.radio(
+                "Screen",
+                ["Week Screen", "Week-End Screen"],
+                key="scenario_02_week_tester_screen",
+            )
+            if st.sidebar.button("Load Screen", width="stretch", key="scenario_02_week_tester_go"):
+                route_name = scenario_02_run_map[tester_path_label][0]
+                if tester_screen == "Week Screen":
+                    load_demo_week_start("scenario_02", route_name, tester_week)
+                else:
+                    load_demo_week_review("scenario_02", route_name, tester_week)
+                st.rerun()
+            st.sidebar.markdown("---")
+        if st.sidebar.button("Restart Scenario", width="stretch"):
+            reset_game()
+            st.rerun()
+
+    if scenario_key == "scenario_02" and experience_mode == "workshop":
+        render_scenario_two_workshop_mock()
+    elif st.session_state.pending_week_review:
         history = game.get_analysis_history()
         if history:
-            previous_snapshot = build_opening_snapshot(game) if len(history) == 1 else history[-2]
-            render_week_resolution(history[-1], previous_snapshot)
+            review_week = st.session_state.get("review_snapshot_week")
+            snapshot = None
+            if review_week is not None:
+                snapshot = next((entry for entry in history if entry["week"] == review_week), None)
+            if snapshot is None:
+                snapshot = history[-1]
+            snapshot_index = history.index(snapshot)
+            previous_snapshot = build_opening_snapshot(game) if snapshot_index == 0 else history[snapshot_index - 1]
+            render_week_resolution(snapshot, previous_snapshot)
             st.stop()
         st.session_state.pending_week_review = False
+        st.session_state.review_snapshot_week = None
 
-    if game.game_over:
+    elif game.game_over:
         if st.session_state.get("results_view") == "score":
             render_final_score(game)
         else:

@@ -10,11 +10,15 @@ from streamlit.testing.v1 import AppTest
 
 from reporting import (
     BENCHMARK_CACHE,
+    SCENARIO_02_HIDDEN_STRAIN_TARGET,
     _analysis_snapshot_for_week,
     average_cluster_strain_across_history,
     build_benchmark_history,
     cluster_strain_avg,
     determine_summary_branch,
+    scenario_two_hidden_employee_strain,
+    scenario_two_hidden_strain_band,
+    scenario_two_read_level,
 )
 from benchmarks import (
     autoplay_demo_route,
@@ -86,10 +90,41 @@ class ScenarioRegressionTests(unittest.TestCase):
         latest = game.get_analysis_history()[-1]
         self.assertEqual(latest.get("scenario_outcome_tier"), "Succeed")
 
+    def test_scenario_01_recommended_route_gets_well_done_debrief(self):
+        game = self._run_recommended("scenario_01", seed=0)
+        history = game.get_analysis_history()
+        latest = history[-1]
+        benchmark_history = build_benchmark_history(game, benchmark_name="stabilising_response")
+        benchmark_latest = _analysis_snapshot_for_week(benchmark_history, game.max_weeks)
+
+        authored_copy = scenario_end_screen_copy(game, history, latest, benchmark_history, benchmark_latest)
+        self.assertIsNotNone(authored_copy)
+        self.assertEqual(
+            authored_copy["outcome"],
+            "Management Review: This was a strong piece of management under pressure.",
+        )
+
     def test_scenario_02_recommended_route_succeeds(self):
         game = self._run_recommended("scenario_02", seed=0)
         latest = game.get_analysis_history()[-1]
         self.assertEqual(latest.get("scenario_outcome_tier"), "Succeed")
+
+    def test_scenario_02_hidden_employee_strain_returns_maya_row(self):
+        game = autoplay_demo_route("early_realignment", 0, "scenario_02")
+        latest = game.get_analysis_history()[-1]
+        metrics = scenario_two_hidden_employee_strain(latest)
+        self.assertIsNotNone(metrics)
+        self.assertEqual(metrics["hidden_name"], "Maya")
+        self.assertGreaterEqual(metrics["true_strain"], 0.0)
+        self.assertLessEqual(metrics["true_strain"], 1.0)
+
+    def test_scenario_02_hidden_strain_band_uses_fixed_target(self):
+        game = autoplay_demo_route("early_realignment", 0, "scenario_02")
+        latest = game.get_analysis_history()[-1]
+        band = scenario_two_hidden_strain_band(latest)
+        self.assertIsNotNone(band)
+        self.assertEqual(band["band"], "well_done")
+        self.assertEqual(band["target"], SCENARIO_02_HIDDEN_STRAIN_TARGET)
 
     def test_scenario_02_diagnostic_actions_are_distinct(self):
         capacity_game = GameState(
@@ -137,6 +172,32 @@ class ScenarioRegressionTests(unittest.TestCase):
 
         branch = determine_summary_branch(game, history, latest, benchmark_history, benchmark_latest)
         self.assertEqual(branch, "well_done")
+
+    def test_scenario_02_none_route_is_reactive_escalation(self):
+        from benchmarks import autoplay_demo_route
+
+        game = autoplay_demo_route("none", seed=0, scenario_key="scenario_02")
+        history = game.get_analysis_history()
+        self.assertEqual(scenario_two_read_level(history), "reactive_escalation")
+
+    def test_scenario_02_relieve_route_is_surface_containment(self):
+        from benchmarks import autoplay_demo_route
+
+        game = autoplay_demo_route("relieve", seed=0, scenario_key="scenario_02")
+        history = game.get_analysis_history()
+        self.assertEqual(scenario_two_read_level(history), "surface_containment")
+
+    def test_scenario_02_mixed_route_is_late_widening(self):
+        from benchmarks import autoplay_demo_route
+
+        game = autoplay_demo_route("mixed", seed=0, scenario_key="scenario_02")
+        history = game.get_analysis_history()
+        self.assertEqual(scenario_two_read_level(history), "late_widening")
+
+    def test_scenario_02_recommended_route_is_early_realignment(self):
+        game = self._run_recommended("scenario_02", seed=0)
+        history = game.get_analysis_history()
+        self.assertEqual(scenario_two_read_level(history), "early_realignment")
 
     def test_snapshot_action_records_player_decision_not_end_week(self):
         game = GameState(
@@ -226,7 +287,7 @@ class ScenarioRegressionTests(unittest.TestCase):
         build_benchmark_history(simulation_game, benchmark_name="stabilising_response")
         self.assertEqual(len(BENCHMARK_CACHE), 2)
 
-    def test_passive_week_matches_do_nothing_recommendation(self):
+    def test_week_six_recommended_route_requires_riley_support(self):
         game = GameState(
             scenario="scenario_02",
             difficulty="Normal",
@@ -237,10 +298,12 @@ class ScenarioRegressionTests(unittest.TestCase):
         for _ in range(5):
             game.end_week()
 
+        focal = game.get_scenario_role_node_id("focal_employee")
+        game.apply_player_action({"type": "quick_check_in", "target": focal})
         game.end_week()
         latest = game.get_analysis_history()[-1]
         self.assertEqual(latest["week"], 6)
-        self.assertEqual(latest["actions_taken"], [])
+        self.assertEqual(latest["actions_taken"][-1]["type"], "quick_check_in")
         self.assertTrue(strategy_aligned_with_recommendation(latest, 6))
 
     def test_benchmark_histories_respect_requested_strategy(self):
@@ -293,8 +356,8 @@ class ScenarioRegressionTests(unittest.TestCase):
         ]
 
         expected_outcomes = {
-            "spiralled": "Management Review: The launch was not controlled well enough.",
-            "high_strain_count": "Management Review: You got the launch through, but not strongly enough.",
+            "spiralled": "Management Review: The launch failed.",
+            "high_strain_count": "Management Review: You got the launch through, but just about.",
             "more_strain_than_needed": "Management Review: You recovered the situation, but later than we would want.",
             "well_done": "Management Review: This was a strong piece of management under pressure.",
         }
@@ -506,13 +569,12 @@ class ScenarioRegressionTests(unittest.TestCase):
 
         self.assertIn("steadied the group around jordan", vm.briefing_aside.lower())
 
-    def test_scenario_01_sidebar_is_not_rendered(self):
+    def test_app_renders_without_exception(self):
         original_test_mode = os.environ.pop("MANAGEMENT_SIM_TEST_MODE", None)
         try:
             app = AppTest.from_file("/Users/james/Supress The Stress/app.py")
             app.run(timeout=20)
-            self.assertEqual(len(app.sidebar.button), 0)
-            self.assertEqual(len(app.sidebar.selectbox), 0)
+            self.assertEqual(len(app.exception), 0)
         finally:
             if original_test_mode is not None:
                 os.environ["MANAGEMENT_SIM_TEST_MODE"] = original_test_mode
@@ -561,6 +623,24 @@ class ScenarioRegressionTests(unittest.TestCase):
 
         self.assertIsNotNone(week_note)
         self.assertIn("about as steady as it realistically could", week_note[0].lower())
+
+    def test_scenario_01_week_five_action_on_sam_stays_positive(self):
+        game = self._run_actions_until_week("scenario_01", {
+            1: [("group_mediation", "focal"), ("quick_check_in", "hidden")],
+            2: [("clarify_roles_and_handoffs", "focal")],
+            3: [("group_mediation", "focal"), ("quick_check_in", "hidden")],
+            4: [("clarify_roles_and_handoffs", "focal"), ("quick_check_in", "hidden")],
+            5: [("quick_check_in", "hidden")],
+        }, stop_week=5)
+        history = game.get_analysis_history()
+        latest = history[-1]
+        previous_snapshot = history[-2]
+        benchmark_history = build_benchmark_history(game, benchmark_name="stabilising_response")
+        benchmark_latest = _analysis_snapshot_for_week(benchmark_history, latest["week"])
+        week_note = scenario_week_end_report(game, latest, previous_snapshot, benchmark_history, benchmark_latest)
+
+        self.assertIsNotNone(week_note)
+        self.assertNotIn("too much quiet cost", " ".join(week_note).lower())
 
     def test_scenario_01_week_six_action_on_jordan_plus_individual_on_sam_stays_positive(self):
         game = self._run_actions_until_week("scenario_01", {

@@ -162,6 +162,217 @@ def draw_workload_distribution_chart(rows, selected_id):
     return fig
 
 
+def draw_observed_vs_workload_chart(snapshot, title):
+    employees = snapshot.get("employees", []) if snapshot else []
+    roles = snapshot.get("scenario_roles", {}) if snapshot else {}
+    focal_id = roles.get("focal_employee")
+    hidden_id = roles.get("hidden_strain_employee")
+
+    fig, ax = plt.subplots(figsize=(6.3, 4.2))
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.xaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+    ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+    ax.set_xlabel("Observed Strain")
+    ax.set_ylabel("Absorbed Workload")
+    ax.set_title(title, fontsize=12)
+    ax.grid(alpha=0.12)
+    ax.set_axisbelow(True)
+    for spine in ["top", "right"]:
+        ax.spines[spine].set_visible(False)
+
+    ax.axvline(0.5, color="#eadfcb", linewidth=1.0, linestyle="--", zorder=0)
+    ax.axhline(0.5, color="#eadfcb", linewidth=1.0, linestyle="--", zorder=0)
+
+    for row in employees:
+        x = float(row.get("observed_risk", 0.0))
+        y = min(1.0, float(row.get("absorbed_workload", 0.0)))
+        node_id = row.get("id")
+        is_riley = node_id == focal_id
+        is_maya = node_id == hidden_id
+
+        if is_riley:
+            color = "#d97706"
+            edge = "#7c2d12"
+            size = 240
+        elif is_maya:
+            color = "#0f766e"
+            edge = "#134e4a"
+            size = 240
+        else:
+            color = "#94a3b8"
+            edge = "#e2e8f0"
+            size = 140
+
+        ax.scatter(x, y, s=size, color=color, edgecolors=edge, linewidths=1.4, alpha=0.95, zorder=3)
+        ax.text(
+            x,
+            y + 0.03,
+            row.get("name", "Unknown"),
+            ha="center",
+            va="bottom",
+            fontsize=8,
+            color="#1f2937",
+        )
+
+    plt.tight_layout()
+    return fig
+
+
+def _delta_label(current, previous):
+    if previous is None:
+        return ""
+    delta = current - previous
+    if abs(delta) < 0.01:
+        return "flat"
+    arrow = "up" if delta > 0 else "down"
+    return f"{arrow} {abs(round(delta * 100))} pts"
+
+
+def draw_riley_maya_bar_chart(snapshot, title, previous_snapshot=None):
+    employees = snapshot.get("employees", []) if snapshot else []
+    roles = snapshot.get("scenario_roles", {}) if snapshot else {}
+    focal_id = roles.get("focal_employee")
+    hidden_id = roles.get("hidden_strain_employee")
+
+    employee_lookup = {row.get("id"): row for row in employees}
+    previous_lookup = {
+        row.get("id"): row for row in (previous_snapshot.get("employees", []) if previous_snapshot else [])
+    }
+    focal_row = employee_lookup.get(focal_id)
+    hidden_row = employee_lookup.get(hidden_id)
+    rows = [row for row in (focal_row, hidden_row) if row is not None]
+
+    fig, ax = plt.subplots(figsize=(6.4, 3.8))
+    if not rows:
+        ax.set_title(title, fontsize=12)
+        ax.axis("off")
+        return fig
+
+    labels = [row.get("name", "Unknown") for row in rows]
+    observed_values = [float(row.get("observed_risk", 0.0)) for row in rows]
+    workload_values = [min(1.0, float(row.get("absorbed_workload", 0.0))) for row in rows]
+
+    x_positions = range(len(rows))
+    bar_width = 0.34
+
+    ax.bar(
+        [x - bar_width / 2 for x in x_positions],
+        observed_values,
+        width=bar_width,
+        color="#d97706",
+        alpha=0.9,
+        label="Observed Strain",
+    )
+    ax.bar(
+        [x + bar_width / 2 for x in x_positions],
+        workload_values,
+        width=bar_width,
+        color="#0f766e",
+        alpha=0.9,
+        label="Absorbed Workload",
+    )
+
+    ax.set_xticks(list(x_positions))
+    ax.set_xticklabels(labels)
+    ax.set_ylim(0, 1)
+    ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+    ax.set_title(title, fontsize=12)
+    ax.grid(axis="y", alpha=0.14)
+    ax.set_axisbelow(True)
+    ax.legend(frameon=False, fontsize=8.5, loc="upper left")
+    for spine in ["top", "right"]:
+        ax.spines[spine].set_visible(False)
+
+    for index, row in enumerate(rows):
+        prev_row = previous_lookup.get(row.get("id"))
+        observed_delta = _delta_label(
+            float(row.get("observed_risk", 0.0)),
+            float(prev_row.get("observed_risk", 0.0)) if prev_row else None,
+        )
+        workload_delta = _delta_label(
+            min(1.0, float(row.get("absorbed_workload", 0.0))),
+            min(1.0, float(prev_row.get("absorbed_workload", 0.0))) if prev_row else None,
+        )
+        if observed_delta:
+            ax.text(
+                index - bar_width / 2,
+                min(0.98, observed_values[index] + 0.04),
+                observed_delta,
+                ha="center",
+                va="bottom",
+                fontsize=7.5,
+                color="#7c2d12",
+            )
+        if workload_delta:
+            ax.text(
+                index + bar_width / 2,
+                min(0.98, workload_values[index] + 0.04),
+                workload_delta,
+                ha="center",
+                va="bottom",
+                fontsize=7.5,
+                color="#134e4a",
+            )
+    plt.tight_layout()
+    return fig
+
+
+def draw_riley_maya_observed_vs_actual_chart(snapshot, title):
+    employees = snapshot.get("employees", []) if snapshot else []
+    roles = snapshot.get("scenario_roles", {}) if snapshot else {}
+    focal_id = roles.get("focal_employee")
+    hidden_id = roles.get("hidden_strain_employee")
+
+    employee_lookup = {row.get("id"): row for row in employees}
+    focal_row = employee_lookup.get(focal_id)
+    hidden_row = employee_lookup.get(hidden_id)
+    rows = [row for row in (focal_row, hidden_row) if row is not None]
+
+    fig, ax = plt.subplots(figsize=(6.4, 3.8))
+    if not rows:
+        ax.set_title(title, fontsize=12)
+        ax.axis("off")
+        return fig
+
+    labels = [row.get("name", "Unknown") for row in rows]
+    observed_values = [float(row.get("observed_risk", 0.0)) for row in rows]
+    actual_values = [float(row.get("true_strain", 0.0)) for row in rows]
+
+    x_positions = range(len(rows))
+    bar_width = 0.34
+
+    ax.bar(
+        [x - bar_width / 2 for x in x_positions],
+        observed_values,
+        width=bar_width,
+        color="#d97706",
+        alpha=0.9,
+        label="Observed Strain",
+    )
+    ax.bar(
+        [x + bar_width / 2 for x in x_positions],
+        actual_values,
+        width=bar_width,
+        color="#8b5cf6",
+        alpha=0.9,
+        label="Actual Strain",
+    )
+
+    ax.set_xticks(list(x_positions))
+    ax.set_xticklabels(labels)
+    ax.set_ylim(0, 1)
+    ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+    ax.set_title(title, fontsize=12)
+    ax.grid(axis="y", alpha=0.14)
+    ax.set_axisbelow(True)
+    ax.legend(frameon=False, fontsize=8.5, loc="upper left")
+    for spine in ["top", "right"]:
+        ax.spines[spine].set_visible(False)
+    plt.tight_layout()
+    return fig
+
+
 def _fixed_team_positions(employee_ids, cluster_ids):
     positions = {}
     cluster_positions = [
@@ -232,9 +443,7 @@ def draw_network_chart(game):
     )
     labels = {n: graph.nodes[n]["name"] for n in graph.nodes()}
     nx.draw_networkx_labels(graph, pos, labels=labels, font_size=7.2, ax=ax)
-    ax.set_title("Dependency Flow" if game.scenario == "scenario_02" else "Team Connections", fontsize=12)
+    ax.set_title("Dependency Flow" if game.scenario == "scenario_02" else "Working Group Connections", fontsize=12)
     ax.axis("off")
     plt.tight_layout()
     return fig
-
-

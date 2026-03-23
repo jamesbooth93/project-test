@@ -59,6 +59,14 @@ def build_quiet_high_performer_story_data(game):
     roles = game.scenario_state.get("scenario_roles", {})
     focal_id = roles.get("focal_employee")
     hidden_id = roles.get("hidden_strain_employee")
+    if game.scenario_state.get("great_manager_path_active", False) and game.week >= 4:
+        return {
+            "what_you_chose": "You stayed with the broader read and kept the team from drifting back into quiet dependence on one person.",
+            "how_it_landed": "That helped the visible issue stay managed while keeping the hidden carrying pattern from rebuilding in the background.",
+            "what_shifted": "The work looked less concentrated in Maya, and Riley no longer needed the same amount of invisible compensation around him.",
+            "what_to_watch": "The task now is to hold the gain: keep Riley supported without letting the system quietly route the burden back through Maya.",
+            "response_style": "cluster_stabilising",
+        }
     targeted_action_types = {
         "quick_check_in",
         "offer_coaching_support",
@@ -263,11 +271,11 @@ def apply_quiet_high_performer_week_bias(game):
 
     if game.week <= 3:
         add_behaviors(focal, ["missed_deadline_minor", "complaint"])
-    if game.week >= 4:
+    if game.week >= 4 and int(game.scenario_state.get("load_relief_on_hidden_by_week_4", 0)) <= 0:
         add_behaviors(hidden, ["ignored_email"])
 
     if story_style == "no_intervention":
-        for node_id, bump in [(focal, 0.016), (hidden, 0.034), (spillover, 0.020)]:
+        for node_id, bump in [(focal, 0.012), (hidden, 0.026), (spillover, 0.016)]:
             game.G.nodes[node_id]["strain"] = float(np.clip(game.G.nodes[node_id]["strain"] + bump, 0, 1))
         redistribute_hidden_work(0.58)
         add_behaviors(hidden, ["lateness"])
@@ -275,22 +283,26 @@ def apply_quiet_high_performer_week_bias(game):
         if cluster_anchor is not None:
             game.G.nodes[cluster_anchor]["alignment"] = float(np.clip(game.G.nodes[cluster_anchor]["alignment"] - 0.02, 0, 1))
     elif story_style == "targeted_on_focal":
-        game.G.nodes[focal]["strain"] = float(np.clip(game.G.nodes[focal]["strain"] - 0.030, 0, 1))
-        game.G.nodes[hidden]["strain"] = float(np.clip(game.G.nodes[hidden]["strain"] + 0.026, 0, 1))
-        game.G.nodes[spillover]["strain"] = float(np.clip(game.G.nodes[spillover]["strain"] + 0.012, 0, 1))
+        game.G.nodes[focal]["strain"] = float(np.clip(game.G.nodes[focal]["strain"] - 0.026, 0, 1))
+        game.G.nodes[hidden]["strain"] = float(np.clip(game.G.nodes[hidden]["strain"] + 0.018, 0, 1))
+        game.G.nodes[spillover]["strain"] = float(np.clip(game.G.nodes[spillover]["strain"] + 0.008, 0, 1))
         redistribute_hidden_work(0.62)
         add_behaviors(hidden, ["lateness", "high_error_rate"])
     elif story_style == "targeted_on_hidden":
-        game.G.nodes[hidden]["strain"] = float(np.clip(game.G.nodes[hidden]["strain"] - 0.040, 0, 1))
-        redistribute_hidden_work(0.44)
+        game.G.nodes[hidden]["strain"] = float(np.clip(game.G.nodes[hidden]["strain"] - 0.072, 0, 1))
+        game.G.nodes[hidden]["absorbed_workload"] = max(0.0, game.G.nodes[hidden].get("absorbed_workload", 0.0) - 0.10)
+        game.G.nodes[hidden]["last_absorbed_workload"] = max(0.0, game.G.nodes[hidden].get("last_absorbed_workload", 0.0) - 0.08)
+        redistribute_hidden_work(0.30)
         game.G.nodes[focal]["strain"] = float(np.clip(game.G.nodes[focal]["strain"] + 0.005, 0, 1))
         cluster_anchor = roles.get("cluster_anchor")
         if cluster_anchor is not None:
             game.G.nodes[cluster_anchor]["alignment"] = float(np.clip(game.G.nodes[cluster_anchor]["alignment"] + 0.01, 0, 1))
     elif story_style == "cluster_stabilising":
-        for node_id, drop in [(hidden, 0.050), (focal, 0.028), (spillover, 0.024)]:
+        for node_id, drop in [(hidden, 0.082), (focal, 0.032), (spillover, 0.028)]:
             game.G.nodes[node_id]["strain"] = float(np.clip(game.G.nodes[node_id]["strain"] - drop, 0, 1))
-        redistribute_hidden_work(0.34)
+        game.G.nodes[hidden]["absorbed_workload"] = max(0.0, game.G.nodes[hidden].get("absorbed_workload", 0.0) - 0.14)
+        game.G.nodes[hidden]["last_absorbed_workload"] = max(0.0, game.G.nodes[hidden].get("last_absorbed_workload", 0.0) - 0.10)
+        redistribute_hidden_work(0.18)
         game.G.nodes[spillover]["alignment"] = float(np.clip(game.G.nodes[spillover]["alignment"] + 0.04, 0, 1))
         cluster_anchor = roles.get("cluster_anchor")
         if cluster_anchor is not None:
@@ -300,9 +312,72 @@ def apply_quiet_high_performer_week_bias(game):
         redistribute_hidden_work(0.50)
 
     if game.scenario_state.get("acceptable_route_active", False):
-        game.G.nodes[hidden]["strain"] = float(np.clip(game.G.nodes[hidden]["strain"] - 0.022, 0, 1))
+        game.G.nodes[hidden]["strain"] = float(np.clip(game.G.nodes[hidden]["strain"] - 0.048, 0, 1))
         game.G.nodes[focal]["strain"] = float(np.clip(game.G.nodes[focal]["strain"] - 0.010, 0, 1))
-        redistribute_hidden_work(0.40)
+        game.G.nodes[hidden]["absorbed_workload"] = max(0.0, game.G.nodes[hidden].get("absorbed_workload", 0.0) - 0.10)
+        game.G.nodes[hidden]["last_absorbed_workload"] = max(0.0, game.G.nodes[hidden].get("last_absorbed_workload", 0.0) - 0.08)
+        redistribute_hidden_work(0.22)
+
+    # If Maya's hidden carrying is not being read and relieved early enough,
+    # let that become materially more visible by weeks 3-4.
+    hidden_read_early = int(game.scenario_state.get("investigated_hidden_by_week_2", 0))
+    hidden_relief = int(game.scenario_state.get("load_relief_on_hidden_by_week_4", 0))
+    hidden_targeting = int(game.scenario_state.get("targeted_on_hidden_by_week_4", 0))
+
+    if game.week >= 2 and hidden_read_early <= 0:
+        game.G.nodes[hidden]["strain"] = float(np.clip(game.G.nodes[hidden]["strain"] + 0.008, 0, 1))
+        game.G.nodes[focal]["strain"] = float(np.clip(game.G.nodes[focal]["strain"] + 0.003, 0, 1))
+
+    if game.week >= 3 and hidden_relief <= 0:
+        game.G.nodes[hidden]["strain"] = float(np.clip(game.G.nodes[hidden]["strain"] + 0.016, 0, 1))
+        game.G.nodes[spillover]["strain"] = float(np.clip(game.G.nodes[spillover]["strain"] + 0.007, 0, 1))
+        game.G.nodes[hidden]["absorbed_workload"] = float(np.clip(game.G.nodes[hidden].get("absorbed_workload", 0.0) + 0.08, 0, 1))
+        game.G.nodes[hidden]["last_absorbed_workload"] = float(np.clip(game.G.nodes[hidden].get("last_absorbed_workload", 0.0) + 0.06, 0, 1))
+        game.G.nodes[hidden]["scenario_display_load"] = float(np.clip(game.G.nodes[hidden].get("scenario_display_load", 0.0) + 0.08, 0, 1))
+        add_behaviors(hidden, ["lateness"])
+
+    if game.week >= 4 and hidden_targeting < 2:
+        game.G.nodes[hidden]["strain"] = float(np.clip(game.G.nodes[hidden]["strain"] + 0.012, 0, 1))
+        game.G.nodes[hidden]["scenario_display_load"] = float(np.clip(game.G.nodes[hidden].get("scenario_display_load", 0.0) + 0.06, 0, 1))
+        add_behaviors(hidden, ["high_error_rate"])
+
+    if hidden_read_early >= 1 and hidden_relief >= 1:
+        game.G.nodes[hidden]["strain"] = float(np.clip(game.G.nodes[hidden]["strain"] - 0.042, 0, 1))
+        game.G.nodes[hidden]["absorbed_workload"] = max(0.0, game.G.nodes[hidden].get("absorbed_workload", 0.0) - 0.08)
+        game.G.nodes[hidden]["last_absorbed_workload"] = max(0.0, game.G.nodes[hidden].get("last_absorbed_workload", 0.0) - 0.06)
+        game.G.nodes[hidden]["scenario_display_load"] = max(0.0, game.G.nodes[hidden].get("scenario_display_load", 0.0) - 0.08)
+        if hidden_targeting >= 2:
+            game.G.nodes[hidden]["strain"] = float(np.clip(game.G.nodes[hidden]["strain"] - 0.028, 0, 1))
+            game.G.nodes[hidden]["scenario_display_load"] = max(0.0, game.G.nodes[hidden].get("scenario_display_load", 0.0) - 0.04)
+
+    if game.scenario_state.get("great_manager_path_active", False):
+        strong_route_caps = {
+            4: 0.55,
+            5: 0.40,
+            6: 0.28,
+        }
+        cap = strong_route_caps.get(game.week)
+        if cap is not None:
+            game.G.nodes[hidden]["strain"] = min(float(game.G.nodes[hidden]["strain"]), cap)
+
+    # Scenario 2 is about different outward expressions of very similar underlying load.
+    # Keep Maya and Riley's true strain within a narrow band while allowing observed risk
+    # and visible behavior to diverge. On the strongest route, use the band to pull Riley
+    # back toward Maya rather than dragging Maya up to match a noisy focal spike.
+    focal_strain = float(game.G.nodes[focal]["strain"])
+    hidden_strain = float(game.G.nodes[hidden]["strain"])
+    strain_gap = abs(hidden_strain - focal_strain)
+    max_gap = 0.05
+    if strain_gap > max_gap:
+        if game.scenario_state.get("great_manager_path_active", False):
+            if focal_strain >= hidden_strain:
+                game.G.nodes[focal]["strain"] = float(np.clip(hidden_strain + max_gap, 0, 1))
+            else:
+                game.G.nodes[hidden]["strain"] = float(np.clip(focal_strain + max_gap, 0, 1))
+        elif hidden_strain >= focal_strain:
+            game.G.nodes[focal]["strain"] = float(np.clip(hidden_strain - max_gap, 0, 1))
+        else:
+            game.G.nodes[hidden]["strain"] = float(np.clip(focal_strain - max_gap, 0, 1))
 
     game.scenario_state["benchmark_path_guess"] = game._classify_run_response_style()
 

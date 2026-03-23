@@ -103,9 +103,9 @@ def _scenario_one_route_actions(route_name, week, focal, hidden):
 
 
 def _scenario_two_route_actions(route_name, week, focal, hidden, anchor):
-    if route_name == "blind":
+    if route_name == "reactive_escalation":
         return []
-    if route_name == "visible_only":
+    if route_name == "surface_containment":
         route = {
             1: [{"type": "quick_check_in", "target": focal}],
             2: [{"type": "offer_coaching_support", "target": focal}],
@@ -115,17 +115,16 @@ def _scenario_two_route_actions(route_name, week, focal, hidden, anchor):
             6: [{"type": "quick_check_in", "target": focal}],
         }
         return [action for action in route.get(week, []) if action.get("target") is not None]
-    if route_name == "late_shift":
+    if route_name == "late_widening":
         route = {
             1: [{"type": "quick_check_in", "target": focal}],
             2: [{"type": "offer_coaching_support", "target": focal}],
             3: [{"type": "check_in_on_load_bearing_risk", "target": hidden}],
             4: [
                 {"type": "reallocate_workload", "target": {"from": hidden, "to": anchor}},
-                {"type": "clarify_roles_and_handoffs", "target": hidden},
             ],
-            5: [{"type": "quick_check_in", "target": hidden}],
-            6: [{"type": "do_nothing", "target": None}],
+            5: [{"type": "quick_check_in", "target": focal}],
+            6: [{"type": "quick_check_in", "target": focal}],
         }
         return [
             action for action in route.get(week, [])
@@ -133,8 +132,30 @@ def _scenario_two_route_actions(route_name, week, focal, hidden, anchor):
             or action.get("target") is not None
             or (action.get("type") == "reallocate_workload" and anchor is not None)
         ]
-    if route_name == "early_read":
-        return None
+    if route_name == "early_realignment":
+        route = {
+            1: [
+                {"type": "check_in_on_load_bearing_risk", "target": hidden},
+                {"type": "quick_check_in", "target": focal},
+            ],
+            2: [
+                {"type": "reallocate_workload", "target": {"from": hidden, "to": anchor}},
+                {"type": "quick_check_in", "target": focal},
+            ],
+            3: [{"type": "surface_hidden_support_work", "target": hidden}],
+            4: [
+                {"type": "quick_check_in", "target": hidden},
+                {"type": "quick_check_in", "target": focal},
+            ],
+            5: [{"type": "quick_check_in", "target": focal}],
+            6: [{"type": "quick_check_in", "target": focal}],
+        }
+        return [
+            action for action in route.get(week, [])
+            if action.get("type") == "do_nothing"
+            or action.get("target") is not None
+            or (action.get("type") == "reallocate_workload" and anchor is not None)
+        ]
     raise ValueError(f"Unknown scenario_02 route: {route_name}")
 
 
@@ -171,10 +192,85 @@ def autoplay_demo_route(route_name, seed, scenario_key):
 
         if game.scenario == "scenario_02":
             scenario_two_route = {
+                "none": "reactive_escalation",
+                "relieve": "surface_containment",
+                "mixed": "late_widening",
+                "recommended": "early_realignment",
+            }.get(route_name, route_name)
+            scenario_two_actions = _scenario_two_route_actions(scenario_two_route, week, focal, hidden, anchor)
+            if scenario_two_actions is None:
+                apply_recommended_actions_for_week(game)
+            else:
+                for action in scenario_two_actions:
+                    _try_apply(game, action)
+            game.end_week()
+            continue
+
+        if route_name == "none":
+            pass
+        elif route_name == "recommended":
+            apply_recommended_actions_for_week(game)
+        elif route_name == "relieve":
+            if week in {1, 3}:
+                _try_apply(game, {"type": "reduce_workload", "target": focal})
+                _try_apply(game, {"type": "quick_check_in", "target": focal})
+            elif week in {2, 4, 5, 6}:
+                _try_apply(game, {"type": "offer_coaching_support", "target": focal})
+                _try_apply(game, {"type": "quick_check_in", "target": focal})
+        elif route_name == "mixed":
+            if week == 1:
+                _try_apply(game, {"type": "group_mediation", "target": focal})
+                _try_apply(game, {"type": "quick_check_in", "target": focal})
+            elif week == 2:
+                _try_apply(game, {"type": "clarify_roles_and_handoffs", "target": focal})
+                _try_apply(game, {"type": "offer_coaching_support", "target": focal})
+            elif week in {3, 4, 5, 6}:
+                _try_apply(game, {"type": "quick_check_in", "target": focal})
+        else:
+            raise ValueError(f"Unknown demo route: {route_name}")
+
+        game.end_week()
+
+    return game
+
+
+def autoplay_demo_route_until_week(route_name, seed, scenario_key, stop_week):
+    game = GameState(
+        scenario=scenario_key,
+        difficulty="Normal",
+        team_size=SCENARIOS[scenario_key].team_size,
+        max_weeks=SCENARIOS[scenario_key].length,
+        seed=seed,
+        debug=False,
+    )
+    while not game.game_over and game.week <= min(stop_week, game.max_weeks):
+        week = game.week
+        focal = game.get_scenario_role_node_id("focal_employee")
+        hidden = game.get_scenario_role_node_id("hidden_strain_employee")
+        anchor = game.get_scenario_role_node_id("cluster_anchor")
+
+        if game.scenario == "scenario_01":
+            scenario_one_route = {
                 "none": "blind",
                 "relieve": "visible_only",
                 "mixed": "late_shift",
                 "recommended": "early_read",
+            }.get(route_name, route_name)
+            scenario_one_actions = _scenario_one_route_actions(scenario_one_route, week, focal, hidden)
+            if scenario_one_actions is None:
+                apply_recommended_actions_for_week(game)
+            else:
+                for action in scenario_one_actions:
+                    _try_apply(game, action)
+            game.end_week()
+            continue
+
+        if game.scenario == "scenario_02":
+            scenario_two_route = {
+                "none": "reactive_escalation",
+                "relieve": "surface_containment",
+                "mixed": "late_widening",
+                "recommended": "early_realignment",
             }.get(route_name, route_name)
             scenario_two_actions = _scenario_two_route_actions(scenario_two_route, week, focal, hidden, anchor)
             if scenario_two_actions is None:
